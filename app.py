@@ -714,10 +714,17 @@ def search_database():
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    # Run Flask app with debug mode but disable auto-reload to prevent upload interruptions
+    import os
+    # Get port from environment variable (Render sets this automatically)
+    port = int(os.environ.get('PORT', 5000))
+    
+    # Check if running in production
+    is_production = os.environ.get('FLASK_ENV') == 'production'
+    
+    # Run Flask app
     app.run(
-        debug=True, 
+        debug=not is_production,  # Disable debug in production
         host='0.0.0.0', 
-        port=5000,
+        port=port,
         use_reloader=False  # Disable auto-reload to prevent upload interruptions
     )

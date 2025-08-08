@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: cct-roan-project-beta
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FLASK_ENV
+        value: production
+    autoDeploy: false
