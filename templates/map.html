@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+
+{% block title %}{{ table_name }} - Map View | CCT-Roan Project Beta{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<div class="hero-section">
+    <h1 class="hero-title">
+        <i class="fas fa-map-marked-alt" style="color: var(--primary-teal);"></i> 
+        {{ table_name }} Map View
+    </h1>
+    <p class="hero-subtitle">
+        Explore {{ total_count }} spatial features on an interactive map
+    </p>
+</div>
+
+<!-- Navigation Bar -->
+<div class="search-section" style="padding: 1.5rem; margin-bottom: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <a href="/table/{{ table_name }}" class="btn-outline" style="text-decoration: none;">
+                <i class="fas fa-table"></i> Table View
+            </a>
+            <a href="/" class="btn-outline" style="text-decoration: none;">
+                <i class="fas fa-arrow-left"></i> Back to Overview
+            </a>
+        </div>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            {% if filter_query and filter_type == 'search' %}
+            <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: rgba(26, 188, 156, 0.1); border-radius: 6px; border: 1px solid var(--primary-teal);">
+                <i class="fas fa-filter" style="color: var(--primary-teal);"></i>
+                <span style="color: var(--dark-teal); font-weight: 500;">Filtered: "{{ filter_query }}"</span>
+                <button id="toggle-filter-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem; margin-left: 0.5rem;">
+                    <i class="fas fa-eye" id="filter-icon"></i> <span id="filter-text">Show All</span>
+                </button>
+            </div>
+            {% endif %}
+            <button id="fit-bounds-btn" class="btn-primary" style="border: none;">
+                <i class="fas fa-expand-arrows-alt"></i> Fit All
+            </button>
+            <button id="toggle-layers" class="btn-outline" style="border: 2px solid var(--border-light);">
+                <i class="fas fa-layer-group"></i> Layers
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Section -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+    <div class="data-card" style="text-align: center; padding: 1.5rem;">
+        <div class="stat-item" style="flex-direction: column; gap: 0.5rem;">
+            <i class="fas fa-database stat-icon" style="font-size: 2rem;"></i>
+            <h3 style="color: var(--primary-teal); margin: 0; font-weight: 700;">{{ total_count }}</h3>
+            <span style="color: var(--text-light); font-weight: 500;">Total Features</span>
+        </div>
+    </div>
+    <div class="data-card" style="text-align: center; padding: 1.5rem;">
+        <div class="stat-item" style="flex-direction: column; gap: 0.5rem;">
+            <i class="fas fa-map stat-icon" style="font-size: 2rem;"></i>
+            <h3 id="map-status" style="color: var(--accent-teal); margin: 0; font-weight: 700;">Loading...</h3>
+            <span style="color: var(--text-light); font-weight: 500;">Map Status</span>
+        </div>
+    </div>
+    <div class="data-card" style="text-align: center; padding: 1.5rem;">
+        <div class="stat-item" style="flex-direction: column; gap: 0.5rem;">
+            <i class="fas fa-globe stat-icon" style="font-size: 2rem;"></i>
+            <h3 style="color: var(--dark-teal); margin: 0; font-weight: 700;">WGS 84</h3>
+            <span style="color: var(--text-light); font-weight: 500;">Coordinate System</span>
+        </div>
+    </div>
+</div>
+
+<!-- Interactive Map -->
+<div class="data-card" style="padding: 0; overflow: hidden;">
+    <div style="background: var(--primary-teal); color: var(--white); padding: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+        <h4 style="margin: 0; font-weight: 600;">
+            <i class="fas fa-globe"></i> Interactive Map
+        </h4>
+        <div style="display: flex; gap: 0.75rem;">
+            <a href="/download/shapefile/{{ table_name }}" class="btn-outline" style="text-decoration: none; color: var(--white); border-color: rgba(255,255,255,0.3);">
+                <i class="fas fa-download"></i> Shapefile
+            </a>
+            <a href="/api/geojson/{{ table_name }}" class="btn-outline" style="text-decoration: none; color: var(--white); border-color: rgba(255,255,255,0.3);" target="_blank">
+                <i class="fas fa-code"></i> GeoJSON
+            </a>
+        </div>
+    </div>
+    <div style="height: 600px; width: 100%;">
+        <div id="map" style="height: 100%; width: 100%; border-radius: 0 0 16px 16px;"></div>
+    </div>
+</div>
+
+<!-- Feature Info Panel -->
+<div class="data-card" id="feature-info" style="display: none; margin-top: 2rem;">
+    <div class="card-header">
+        <h4 class="card-title">
+            <i class="fas fa-info-circle stat-icon"></i> Feature Information
+        </h4>
+    </div>
+    <div style="margin-top: 1rem;">
+        <div id="feature-details"></div>
+    </div>
+</div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Leaflet CSS and JS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize map
+    const map = L.map('map').setView([0, 0], 2);
+    
+    // Add base layers
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    });
+    
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri, Maxar, Earthstar Geographics'
+    });
+    
+    // Add default layer
+    osmLayer.addTo(map);
+    
+    // Layer control
+    const baseLayers = {
+        "OpenStreetMap": osmLayer,
+        "Satellite": satelliteLayer
+    };
+    
+    const overlayLayers = {};
+    const layerControl = L.control.layers(baseLayers, overlayLayers).addTo(map);
+    
+    // Feature group for data
+    const dataLayer = L.featureGroup().addTo(map);
+    
+    // Map bounds from server
+    const mapBounds = {% if map_bounds %}{{ map_bounds | tojson | safe }}{% else %}null{% endif %};
+    
+    // Filter parameters
+    const filterQuery = '{{ filter_query | safe }}';
+    const filterType = '{{ filter_type | safe }}';
+    let isFiltered = filterType === 'search' && filterQuery !== '';
+    
+    // Function to load GeoJSON data
+    function loadMapData(useFilter = isFiltered) {
+        const apiUrl = useFilter && filterQuery ? 
+            `/api/geojson/{{ table_name }}/filtered?q=${encodeURIComponent(filterQuery)}` : 
+            `/api/geojson/{{ table_name }}`;
+        
+        // Clear existing data
+        dataLayer.clearLayers();
+        document.getElementById('map-status').innerHTML = '<span class="text-warning">Loading...</span>';
+        
+        fetch(apiUrl)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('map-status').innerHTML = '<span class="text-danger">Error</span>';
+                console.error('Error loading data:', data.error);
+                return;
+            }
+            
+            // Style function for features
+            function getFeatureStyle(feature) {
+                const geomType = feature.geometry.type;
+                
+                if (geomType === 'Polygon' || geomType === 'MultiPolygon') {
+                    return {
+                        fillColor: '#3388ff',
+                        weight: 2,
+                        opacity: 1,
+                        color: '#0066cc',
+                        fillOpacity: 0.3
+                    };
+                } else if (geomType === 'LineString' || geomType === 'MultiLineString') {
+                    return {
+                        color: '#ff7800',
+                        weight: 3,
+                        opacity: 0.8
+                    };
+                } else {
+                    return {
+                        radius: 6,
+                        fillColor: '#ff7800',
+                        color: '#000',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    };
+                }
+            }
+            
+            // Add GeoJSON to map
+            const geoJsonLayer = L.geoJSON(data, {
+                style: getFeatureStyle,
+                pointToLayer: function(feature, latlng) {
+                    return L.circleMarker(latlng);
+                },
+                onEachFeature: function(feature, layer) {
+                    // Create popup content
+                    let popupContent = '<div class="feature-popup">';
+                    popupContent += '<h6><i class="fas fa-map-marker-alt"></i> Feature Details</h6>';
+                    
+                    if (feature.properties && Object.keys(feature.properties).length > 0) {
+                        popupContent += '<table class="table table-sm">';
+                        for (const [key, value] of Object.entries(feature.properties)) {
+                            if (value !== null && value !== undefined) {
+                                popupContent += `<tr><td><strong>${key}:</strong></td><td>${value}</td></tr>`;
+                            }
+                        }
+                        popupContent += '</table>';
+                    } else {
+                        popupContent += '<p class="text-muted">No additional properties</p>';
+                    }
+                    
+                    popupContent += `<small class="text-muted">Geometry: ${feature.geometry.type}</small>`;
+                    popupContent += '</div>';
+                    
+                    layer.bindPopup(popupContent);
+                    
+                    // Click event for feature info panel
+                    layer.on('click', function(e) {
+                        showFeatureInfo(feature);
+                    });
+                }
+            });
+            
+            geoJsonLayer.addTo(dataLayer);
+            
+            // Update map status
+            const statusText = data.filter_applied ? 
+                `<span class="text-success">Loaded ${data.features.length} filtered features</span>` :
+                `<span class="text-success">Loaded ${data.features.length} features</span>`;
+            document.getElementById('map-status').innerHTML = statusText;
+            
+            // Fit map to data bounds if available
+            if (dataLayer.getLayers().length > 0) {
+                try {
+                    // Try to use server-provided bounds first
+                    if (mapBounds && Array.isArray(mapBounds) && mapBounds.length === 2) {
+                        const [[minLat, minLng], [maxLat, maxLng]] = mapBounds;
+                        if (minLat !== null && minLng !== null && maxLat !== null && maxLng !== null) {
+                            map.fitBounds(mapBounds, { padding: [20, 20] });
+                        } else {
+                            // Fall back to data layer bounds
+                            const bounds = dataLayer.getBounds();
+                            if (bounds.isValid()) {
+                                map.fitBounds(bounds, { padding: [20, 20] });
+                            }
+                        }
+                    } else {
+                        // Use data layer bounds
+                        const bounds = dataLayer.getBounds();
+                        if (bounds.isValid()) {
+                            map.fitBounds(bounds, { padding: [20, 20] });
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Could not fit map bounds:', error);
+                    // Set a default view if bounds fitting fails
+                    map.setView([0, 0], 2);
+                }
+            } else {
+                document.getElementById('map-status').innerHTML = '<span class="text-warning">No features found</span>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading GeoJSON:', error);
+            document.getElementById('map-status').innerHTML = '<span class="text-danger">Error</span>';
+        });
+    }
+    
+    // Initial data load
+    loadMapData();
+    
+    // Filter toggle button event handler
+    const toggleFilterBtn = document.getElementById('toggle-filter-btn');
+    if (toggleFilterBtn) {
+        toggleFilterBtn.addEventListener('click', function() {
+            isFiltered = !isFiltered;
+            
+            // Update button text and icon
+            const filterIcon = document.getElementById('filter-icon');
+            const filterText = document.getElementById('filter-text');
+            
+            if (isFiltered) {
+                filterIcon.className = 'fas fa-eye-slash';
+                filterText.textContent = 'Show All';
+            } else {
+                filterIcon.className = 'fas fa-eye';
+                filterText.textContent = 'Show Filtered';
+            }
+            
+            // Reload map data with new filter state
+            loadMapData(isFiltered);
+        });
+    }
+    
+    // Fit bounds button
+    document.getElementById('fit-bounds-btn').addEventListener('click', function() {
+        if (dataLayer.getLayers().length > 0) {
+            map.fitBounds(dataLayer.getBounds(), { padding: [20, 20] });
+        }
+    });
+    
+    // Show feature information
+    function showFeatureInfo(feature) {
+        const featureInfo = document.getElementById('feature-info');
+        const featureDetails = document.getElementById('feature-details');
+        
+        let content = '<div class="row">';
+        content += '<div class="col-md-6">';
+        content += '<h6><i class="fas fa-shapes"></i> Geometry</h6>';
+        content += `<p><strong>Type:</strong> ${feature.geometry.type}</p>`;
+        
+        if (feature.geometry.coordinates) {
+            const coordCount = JSON.stringify(feature.geometry.coordinates).split(',').length;
+            content += `<p><strong>Coordinates:</strong> ${coordCount} points</p>`;
+        }
+        
+        content += '</div>';
+        content += '<div class="col-md-6">';
+        content += '<h6><i class="fas fa-tags"></i> Properties</h6>';
+        
+        if (feature.properties && Object.keys(feature.properties).length > 0) {
+            for (const [key, value] of Object.entries(feature.properties)) {
+                if (value !== null && value !== undefined) {
+                    content += `<p><strong>${key}:</strong> ${value}</p>`;
+                }
+            }
+        } else {
+            content += '<p class="text-muted">No properties available</p>';
+        }
+        
+        content += '</div>';
+        content += '</div>';
+        
+        featureDetails.innerHTML = content;
+        featureInfo.style.display = 'block';
+        
+        // Scroll to feature info
+        featureInfo.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    // Toggle layers button
+    document.getElementById('toggle-layers').addEventListener('click', function() {
+        // This could be expanded to show/hide different data layers
+        if (map.hasLayer(dataLayer)) {
+            map.removeLayer(dataLayer);
+            this.innerHTML = '<i class="fas fa-eye-slash"></i> Show Data';
+        } else {
+            map.addLayer(dataLayer);
+            this.innerHTML = '<i class="fas fa-layer-group"></i> Layers';
+        }
+    });
+});
+</script>
+
+<style>
+.feature-popup {
+    max-width: 300px;
+}
+
+.feature-popup .table {
+    margin-bottom: 0.5rem;
+}
+
+.feature-popup .table td {
+    padding: 0.25rem;
+    border-top: 1px solid #dee2e6;
+}
+
+.leaflet-popup-content-wrapper {
+    border-radius: 8px;
+}
+
+.leaflet-popup-content {
+    margin: 8px 12px;
+}
+
+#map {
+    border-radius: 0 0 0.375rem 0.375rem;
+}
+</style>
+{% endblock %}

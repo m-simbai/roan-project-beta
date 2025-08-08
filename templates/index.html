@@ -1,0 +1,453 @@
+{% extends "base.html" %}
+
+{% block title %}CCT-Roan Project Beta - Database Overview{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<div class="hero-section">
+    <h1 class="hero-title">{{ tables|length }} Tables in Your Database</h1>
+    <p class="hero-subtitle">
+        Discover and explore your spatial and tabular data with our comprehensive database viewer
+    </p>
+</div>
+
+<!-- Search Section -->
+<div class="search-section">
+    <div class="search-bar" style="display: flex; align-items: center; gap: 0.5rem;">
+        <div style="position: relative; flex: 1;">
+            <i class="fas fa-search search-icon"></i>
+            <input type="text" class="search-input" placeholder="Search tables, columns, or data content..." id="tableSearch">
+        </div>
+        <button id="searchButton" class="btn-primary" style="padding: 0.75rem 1.5rem; white-space: nowrap;">
+            <i class="fas fa-search"></i> Search
+        </button>
+    </div>
+    
+    <div class="filter-buttons">
+        <button class="filter-btn active" data-filter="all">
+            <i class="fas fa-th-large"></i> All Tables
+        </button>
+        <button class="filter-btn" data-filter="spatial">
+            <i class="fas fa-map"></i> Spatial Data
+        </button>
+        <button class="filter-btn" data-filter="tabular">
+            <i class="fas fa-table"></i> Tabular Data
+        </button>
+    </div>
+</div>
+
+<!-- Search Results Section -->
+<div id="searchResultsSection" style="display: none; margin-bottom: 2rem;">
+    <div class="container">
+        <div id="searchResults"></div>
+    </div>
+</div>
+
+{% if tables %}
+<!-- Content Layout -->
+<div class="content-layout">
+    <!-- Listings Section -->
+    <div class="listings-section" id="tableListings">
+        {% for table in tables %}
+        <div class="data-card" data-type="{% if table.has_spatial %}spatial{% else %}tabular{% endif %}" data-name="{{ table.name }}">
+            <div class="card-header">
+                <h3 class="card-title">
+                    {% if table.has_spatial %}
+                    <i class="fas fa-map-marked-alt stat-icon"></i>
+                    {% else %}
+                    <i class="fas fa-table stat-icon"></i>
+                    {% endif %}
+                    {{ table.name }}
+                </h3>
+                {% if table.has_spatial %}
+                <span class="card-badge">Spatial</span>
+                {% else %}
+                <span class="card-badge" style="background: #E3F2FD; color: #1976D2;">Tabular</span>
+                {% endif %}
+            </div>
+            
+            <div class="card-stats">
+                <div class="stat-item">
+                    <i class="fas fa-database stat-icon"></i>
+                    <span><strong>{{ table.count }}</strong> records</span>
+                </div>
+                <div class="stat-item">
+                    <i class="fas fa-columns stat-icon"></i>
+                    <span><strong>{{ table.columns|length }}</strong> columns</span>
+                </div>
+                {% if table.has_spatial %}
+                <div class="stat-item">
+                    <i class="fas fa-globe stat-icon"></i>
+                    <span>GIS Ready</span>
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="mb-3">
+                <small style="color: var(--text-light); font-weight: 500;">Columns:</small><br>
+                <div style="margin-top: 0.5rem;">
+                    {% for col in table.columns[:4] %}
+                        <span style="display: inline-block; background: var(--bg-light); color: var(--text-dark); padding: 0.25rem 0.5rem; border-radius: 6px; font-size: 0.8rem; margin: 0.25rem 0.25rem 0 0;">{{ col }}</span>
+                    {% endfor %}
+                    {% if table.columns|length > 4 %}
+                        <span style="color: var(--text-light); font-size: 0.85rem;">+{{ table.columns|length - 4 }} more</span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="card-actions">
+                <a href="/table/{{ table.name }}" class="btn-primary" style="text-decoration: none; color: white;">
+                    <i class="fas fa-eye"></i> View Data
+                </a>
+                {% if table.has_spatial %}
+                <a href="/map/{{ table.name }}" class="btn-primary" style="text-decoration: none; color: white; background: var(--accent-teal);">
+                    <i class="fas fa-map"></i> Map View
+                </a>
+                <a href="/download/shapefile/{{ table.name }}" class="btn-outline" style="text-decoration: none; color: var(--dark-teal); border-color: var(--dark-teal);">
+                    <i class="fas fa-download"></i> Shapefile
+                </a>
+                {% endif %}
+                <a href="/api/table/{{ table.name }}" class="btn-outline" style="text-decoration: none;" target="_blank">
+                    <i class="fas fa-code"></i> API
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Map Sidebar -->
+    <div class="map-sidebar">
+        <div class="sidebar-header">
+            <h4 class="sidebar-title">
+                <i class="fas fa-info-circle"></i> Database Info
+            </h4>
+        </div>
+        <div class="sidebar-content">
+            <div class="stat-item" style="margin-bottom: 1rem; justify-content: space-between;">
+                <span>Database Type:</span>
+                <strong>PostgreSQL</strong>
+            </div>
+            <div class="stat-item" style="margin-bottom: 1rem; justify-content: space-between;">
+                <span>Total Tables:</span>
+                <strong>{{ tables|length }}</strong>
+            </div>
+            <div class="stat-item" style="margin-bottom: 1rem; justify-content: space-between;">
+                <span>Spatial Tables:</span>
+                <strong>{{ tables|selectattr('has_spatial')|list|length }}</strong>
+            </div>
+            <div class="stat-item" style="margin-bottom: 1.5rem; justify-content: space-between;">
+                <span>Total Records:</span>
+                <strong>{{ tables|sum(attribute='count') }}</strong>
+            </div>
+            
+            <hr style="border-color: var(--border-light); margin: 1.5rem 0;">
+            
+            <h6 style="color: var(--text-dark); margin-bottom: 1rem; font-weight: 600;">
+                <i class="fas fa-layer-group stat-icon"></i> Features
+            </h6>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+                <li style="margin-bottom: 0.5rem; color: var(--text-light); font-size: 0.9rem;">
+                    <i class="fas fa-check stat-icon" style="margin-right: 0.5rem;"></i>
+                    PostGIS Spatial Support
+                </li>
+                <li style="margin-bottom: 0.5rem; color: var(--text-light); font-size: 0.9rem;">
+                    <i class="fas fa-check stat-icon" style="margin-right: 0.5rem;"></i>
+                    Interactive Maps
+                </li>
+                <li style="margin-bottom: 0.5rem; color: var(--text-light); font-size: 0.9rem;">
+                    <i class="fas fa-check stat-icon" style="margin-right: 0.5rem;"></i>
+                    GeoJSON Export
+                </li>
+                <li style="margin-bottom: 0.5rem; color: var(--text-light); font-size: 0.9rem;">
+                    <i class="fas fa-check stat-icon" style="margin-right: 0.5rem;"></i>
+                    REST API Access
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="search-section" style="text-align: center; padding: 3rem 2rem;">
+    <i class="fas fa-database" style="font-size: 4rem; color: var(--text-light); margin-bottom: 1rem;"></i>
+    <h3 style="color: var(--text-dark); margin-bottom: 1rem;">No Tables Found</h3>
+    <p style="color: var(--text-light); margin-bottom: 2rem;">Your database appears to be empty. Import some data to get started!</p>
+    <a href="#" class="btn-primary" style="text-decoration: none; color: white; padding: 1rem 2rem;">
+        <i class="fas fa-upload"></i> Import Data
+    </a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('tableSearch');
+    const searchButton = document.getElementById('searchButton');
+    const tableCards = document.querySelectorAll('.table-card');
+    const searchResultsSection = document.getElementById('searchResultsSection');
+    const tablesGrid = document.querySelector('.tables-grid');
+    let searchTimeout;
+
+    // Search button click handler
+    searchButton.addEventListener('click', function() {
+        const searchTerm = searchInput.value.trim();
+        if (searchTerm.length >= 2) {
+            performEnhancedSearch(searchTerm);
+        } else if (searchTerm.length === 0) {
+            showAllTables();
+            hideSearchResults();
+        } else {
+            alert('Please enter at least 2 characters to search.');
+        }
+    });
+
+    // Enter key handler for search input
+    searchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            searchButton.click();
+        }
+    });
+
+    // Optional: Still support real-time search with debouncing
+    searchInput.addEventListener('input', function() {
+        const searchTerm = this.value.trim();
+        
+        // Clear previous timeout
+        clearTimeout(searchTimeout);
+        
+        if (searchTerm.length === 0) {
+            // Show all tables if search is empty
+            showAllTables();
+            hideSearchResults();
+            return;
+        }
+        
+        if (searchTerm.length < 2) {
+            // Don't search for very short terms
+            return;
+        }
+        
+        // Debounce search to avoid too many API calls
+        searchTimeout = setTimeout(() => {
+            performEnhancedSearch(searchTerm);
+        }, 500); // Increased delay for auto-search
+    });
+
+    function showAllTables() {
+        tableCards.forEach(card => {
+            card.style.display = 'block';
+        });
+    }
+
+    function hideSearchResults() {
+        searchResultsSection.style.display = 'none';
+        if (tablesGrid) {
+            tablesGrid.style.display = 'block';
+        }
+    }
+
+    function performEnhancedSearch(query) {
+        // Show loading state
+        showSearchLoading();
+        
+        fetch(`/api/search?q=${encodeURIComponent(query)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showSearchError(data.error);
+                } else {
+                    displaySearchResults(data);
+                }
+            })
+            .catch(error => {
+                console.error('Search error:', error);
+                showSearchError('Search failed. Please try again.');
+            });
+    }
+
+    function showSearchLoading() {
+        // Hide regular table grid and show search results section
+        if (tablesGrid) {
+            tablesGrid.style.display = 'none';
+        }
+        searchResultsSection.style.display = 'block';
+        
+        // Update search button to show loading state
+        searchButton.disabled = true;
+        searchButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Searching...';
+        
+        // Show loading indicator in results area
+        const searchResults = document.getElementById('searchResults');
+        searchResults.innerHTML = `
+            <div class="data-card" style="text-align: center; padding: 3rem; margin: 2rem 0;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 3rem; color: var(--primary-teal); margin-bottom: 1.5rem;"></i>
+                <h4 style="color: var(--dark-teal); margin-bottom: 0.5rem;">Searching Database</h4>
+                <p style="color: var(--text-secondary);">Searching through tables, columns, and data content...</p>
+            </div>
+        `;
+    }
+
+    function showSearchError(error) {
+        // Reset search button
+        searchButton.disabled = false;
+        searchButton.innerHTML = '<i class="fas fa-search"></i> Search';
+        
+        const searchResults = document.getElementById('searchResults');
+        searchResults.innerHTML = `
+            <div class="data-card" style="text-align: center; padding: 3rem; margin: 2rem 0;">
+                <i class="fas fa-exclamation-triangle" style="font-size: 3rem; color: #e74c3c; margin-bottom: 1.5rem;"></i>
+                <h4 style="color: var(--text-dark); margin-bottom: 0.5rem;">Search Error</h4>
+                <p style="color: var(--text-secondary);">${error}</p>
+                <button onclick="hideSearchResults(); showAllTables();" class="btn-outline" style="margin-top: 1rem; text-decoration: none; padding: 0.5rem 1rem;">
+                    <i class="fas fa-arrow-left"></i> Back to Tables
+                </button>
+            </div>
+        `;
+    }
+
+    function displaySearchResults(data) {
+        // Reset search button
+        searchButton.disabled = false;
+        searchButton.innerHTML = '<i class="fas fa-search"></i> Search';
+        
+        const searchResults = document.getElementById('searchResults');
+        
+        if (data.total_results === 0) {
+            searchResults.innerHTML = `
+                <div class="data-card" style="text-align: center; padding: 3rem; margin: 2rem 0;">
+                    <i class="fas fa-search" style="font-size: 3rem; color: var(--text-light); margin-bottom: 1.5rem;"></i>
+                    <h4 style="color: var(--text-dark); margin-bottom: 0.5rem;">No Results Found</h4>
+                    <p style="color: var(--text-secondary);">No tables, columns, or data content match "${data.query}"</p>
+                    <button onclick="hideSearchResults(); showAllTables();" class="btn-outline" style="margin-top: 1rem; text-decoration: none; padding: 0.5rem 1rem;">
+                        <i class="fas fa-arrow-left"></i> Back to Tables
+                    </button>
+                </div>
+            `;
+            return;
+        }
+        
+        let resultsHtml = `
+            <div class="data-card" style="margin-bottom: 1.5rem; padding: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h4 style="color: var(--dark-teal); margin-bottom: 0.5rem;">
+                            <i class="fas fa-search"></i> Search Results for "${data.query}"
+                        </h4>
+                        <p style="color: var(--text-secondary); margin: 0;">Found ${data.total_results} matching tables</p>
+                    </div>
+                    <button onclick="hideSearchResults(); showAllTables();" class="btn-outline" style="text-decoration: none; padding: 0.5rem 1rem;">
+                        <i class="fas fa-arrow-left"></i> Back to Tables
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        data.results.forEach(result => {
+            const matchTypes = [];
+            if (result.table_match) matchTypes.push('Table Name');
+            if (result.column_matches.length > 0) matchTypes.push(`${result.column_matches.length} Column(s)`);
+            if (result.total_data_matches > 0) matchTypes.push(`${result.total_data_matches} Record(s)`);
+            
+            resultsHtml += `
+                <div class="data-card table-card" style="margin-bottom: 1rem;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h4 class="card-title">
+                                <i class="fas fa-${result.has_spatial ? 'map' : 'table'}"></i>
+                                ${result.table_name}
+                            </h4>
+                            <div style="margin-top: 0.5rem;">
+                                <span class="badge" style="background: var(--light-teal); color: var(--dark-teal); margin-right: 0.5rem; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem;">
+                                    Matches: ${matchTypes.join(', ')}
+                                </span>
+                                ${result.has_spatial ? '<span class="badge" style="background: var(--primary-teal); color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem;">Spatial</span>' : ''}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="padding: 1rem;">
+                        ${result.column_matches.length > 0 ? `
+                            <div style="margin-bottom: 1rem;">
+                                <h6 style="color: var(--dark-teal); margin-bottom: 0.5rem;">Matching Columns:</h6>
+                                <div>
+                                    ${result.column_matches.map(col => `<span class="badge" style="background: rgba(26, 188, 156, 0.1); color: var(--dark-teal); margin-right: 0.5rem; margin-bottom: 0.25rem; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem;">${col}</span>`).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                        
+                        ${result.data_matches.length > 0 ? `
+                            <div style="margin-bottom: 1rem;">
+                                <h6 style="color: var(--dark-teal); margin-bottom: 0.5rem;">Sample Data Matches:</h6>
+                                ${result.data_matches.map(match => `
+                                    <div style="background: rgba(26, 188, 156, 0.05); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.5rem; border-left: 3px solid var(--primary-teal);">
+                                        ${Object.entries(match.matching_fields).map(([field, value]) => `
+                                            <div style="margin-bottom: 0.25rem;">
+                                                <strong style="color: var(--dark-teal);">${field}:</strong>
+                                                <span style="color: var(--text-dark);">${value.length > 100 ? value.substring(0, 100) + '...' : value}</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                `).join('')}
+                                ${result.total_data_matches > 3 ? `<p style="color: var(--text-secondary); font-size: 0.9rem; margin: 0;">... and ${result.total_data_matches - 3} more matches</p>` : ''}
+                            </div>
+                        ` : ''}
+                        
+                        <div class="card-actions">
+                            <a href="/table/${result.table_name}" class="btn-primary" style="text-decoration: none; color: white; padding: 0.5rem 1rem; margin-right: 0.5rem;">
+                                <i class="fas fa-eye"></i> View Data
+                            </a>
+                            ${result.has_spatial ? `
+                                <a href="/map/${result.table_name}?filter=${encodeURIComponent(data.query)}&filter_type=search" class="btn-primary" style="text-decoration: none; color: white; background: var(--accent-teal); padding: 0.5rem 1rem; margin-right: 0.5rem;">
+                                    <i class="fas fa-map"></i> Filtered Map
+                                </a>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        searchResults.innerHTML = resultsHtml;
+    }
+
+    // Filter functionality
+    const filterButtons = document.querySelectorAll('.filter-btn');
+    filterButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            // Clear search when using filters
+            searchInput.value = '';
+            hideSearchResults();
+            
+            // Update active button
+            filterButtons.forEach(btn => btn.classList.remove('active'));
+            this.classList.add('active');
+            
+            const filter = this.dataset.filter;
+            
+            tableCards.forEach(card => {
+                if (filter === 'all') {
+                    card.style.display = 'block';
+                } else if (filter === 'spatial' && card.dataset.type === 'spatial') {
+                    card.style.display = 'block';
+                } else if (filter === 'tabular' && card.dataset.type === 'tabular') {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        });
+    });
+    
+    // Card hover effects
+    tableCards.forEach(card => {
+        card.addEventListener('mouseenter', function() {
+            this.style.transform = 'translateY(-4px)';
+        });
+        
+        card.addEventListener('mouseleave', function() {
+            this.style.transform = 'translateY(-2px)';
+        });
+    });
+});
+</script>
+{% endblock %}
