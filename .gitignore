@@ -52,6 +52,18 @@ Thumbs.db
 temp/
 tmp/
 uploads/temp/
+uploads/*.zip
+
+# Shapefiles and spatial data
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
+*.shp.xml
+Water/
 
 # Debug scripts (optional - you can remove these lines if you want to include them)
 debug_*.py
