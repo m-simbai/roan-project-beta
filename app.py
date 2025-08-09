@@ -46,6 +46,17 @@ if DATABASE_URL.startswith('postgresql://') and '+pg8000' not in DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 
+def make_psycopg_url(base_url: str) -> str:
+    """Return a SQLAlchemy URL that forces the psycopg (psycopg3) driver.
+    Keeps credentials/params intact, only adjusts scheme.
+    """
+    url = base_url
+    if url.startswith('postgres://'):
+        url = 'postgresql://' + url[len('postgres://'):]
+    if url.startswith('postgresql://') and '+psycopg' not in url and '+psycopg2' not in url:
+        url = url.replace('postgresql://', 'postgresql+psycopg://', 1)
+    return url
+
 @app.route('/')
 def index():
     """Main page showing database overview"""
@@ -519,12 +530,15 @@ def process_shapefile_upload(zip_filepath, upload_id):
                 return {'success': False, 'error': 'Shapefile contains no features'}
             
             # Import to PostGIS
-            gdf.to_postgis(
-                name=table_name,
-                con=engine,
-                if_exists='replace',
-                index=False
-            )
+            # Use a psycopg (psycopg3) engine for geometry uploads; pg8000 lacks PostGIS adapters
+            psycopg_url = make_psycopg_url(DATABASE_URL)
+            with create_engine(psycopg_url).connect() as upload_conn:
+                gdf.to_postgis(
+                    name=table_name,
+                    con=upload_conn,
+                    if_exists='replace',
+                    index=False
+                )
             
             return {
                 'success': True,
