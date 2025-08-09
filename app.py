@@ -5,7 +5,7 @@ import zipfile
 import io
 from sqlalchemy import create_engine, text, inspect
 from dotenv import load_dotenv
-from geoalchemy2 import Geometry
+
 import json
 import geopandas as gpd
 from werkzeug.utils import secure_filename
@@ -47,14 +47,17 @@ if DATABASE_URL.startswith('postgresql://') and '+pg8000' not in DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 
-def _infer_geometry_column(gdf):
-    for candidate in ['geometry', 'geom', 'the_geom', 'wkb_geometry']:
-        if candidate in gdf.columns:
-            return candidate
-    # fallback to GeoDataFrame active geometry
-    if hasattr(gdf, 'geometry'):
-        return gdf.geometry.name
-    return 'geometry'
+def make_psycopg2_url(base_url: str) -> str:
+    """Return a SQLAlchemy URL that uses psycopg2 driver for geometry uploads."""
+    url = base_url
+    if url.startswith('postgres://'):
+        url = 'postgresql://' + url[len('postgres://'):]
+    # Force psycopg2 (default PostgreSQL driver in SQLAlchemy 1.4)
+    if '+pg8000' in url:
+        url = url.replace('+pg8000', '')
+    elif '+psycopg' in url:
+        url = url.replace('+psycopg', '')
+    return url
 
 @app.route('/')
 def index():
@@ -543,15 +546,15 @@ def process_shapefile_upload(zip_filepath, upload_id):
             except Exception as crs_err:
                 print(f"[WARN] CRS handling failed, continuing without reprojection: {crs_err}")
 
-            # Import to PostGIS using pg8000 engine with explicit Geometry dtype
-            geom_col = _infer_geometry_column(gdf)
-            gdf.to_postgis(
-                name=table_name,
-                con=engine,
-                if_exists='replace',
-                index=False,
-                dtype={geom_col: Geometry(geometry_type='GEOMETRY', srid=4326)}
-            )
+            # Import to PostGIS using psycopg2 engine for geometry support
+            psycopg2_url = make_psycopg2_url(DATABASE_URL)
+            with create_engine(psycopg2_url).connect() as upload_conn:
+                gdf.to_postgis(
+                    name=table_name,
+                    con=upload_conn,
+                    if_exists='replace',
+                    index=False
+                )
             
             return {
                 'success': True,

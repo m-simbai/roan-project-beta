@@ -1,6 +1,6 @@
 import os
 import geopandas as gpd
-from geoalchemy2 import Geometry
+
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
@@ -105,15 +105,23 @@ class ShapefileImporter:
             
             print(f"[INFO] Importing shapefile to table: {table_name}")
             
-            # Import using existing engine and explicit Geometry dtype
-            geom_col = 'geometry' if 'geometry' in gdf.columns else gdf.geometry.name
-            gdf.to_postgis(
-                name=table_name,
-                con=self.engine,
-                if_exists='replace',  # Replace if table already exists
-                index=False,
-                dtype={geom_col: Geometry(geometry_type='GEOMETRY', srid=4326)}
-            )
+            # Import using psycopg2 engine for geometry support
+            psycopg2_url = self.database_url
+            if psycopg2_url.startswith('postgres://'):
+                psycopg2_url = 'postgresql://' + psycopg2_url[len('postgres://'):]
+            # Remove any explicit driver to use default psycopg2
+            if '+pg8000' in psycopg2_url:
+                psycopg2_url = psycopg2_url.replace('+pg8000', '')
+            elif '+psycopg' in psycopg2_url:
+                psycopg2_url = psycopg2_url.replace('+psycopg', '')
+            
+            with create_engine(psycopg2_url).connect() as upload_conn:
+                gdf.to_postgis(
+                    name=table_name,
+                    con=upload_conn,
+                    if_exists='replace',  # Replace if table already exists
+                    index=False
+                )
             
             print(f"[SUCCESS] Shapefile imported successfully to table '{table_name}'!")
             
