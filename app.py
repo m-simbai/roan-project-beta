@@ -47,16 +47,17 @@ if DATABASE_URL.startswith('postgresql://') and '+pg8000' not in DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 
-def make_psycopg2_url(base_url: str) -> str:
-    """Return a SQLAlchemy URL that uses psycopg2 driver for geometry uploads."""
+def make_psycopg3_url(base_url: str) -> str:
+    """Return a SQLAlchemy URL that uses psycopg3 driver for geometry uploads."""
     url = base_url
     if url.startswith('postgres://'):
         url = 'postgresql://' + url[len('postgres://'):]
-    # Force psycopg2 (default PostgreSQL driver in SQLAlchemy 1.4)
+    # Force psycopg3 by removing other drivers and using default postgresql://
     if '+pg8000' in url:
         url = url.replace('+pg8000', '')
-    elif '+psycopg' in url:
-        url = url.replace('+psycopg', '')
+    elif '+psycopg2' in url:
+        url = url.replace('+psycopg2', '')
+    # Don't add +psycopg, let SQLAlchemy use default with psycopg3 installed
     return url
 
 @app.route('/')
@@ -546,9 +547,9 @@ def process_shapefile_upload(zip_filepath, upload_id):
             except Exception as crs_err:
                 print(f"[WARN] CRS handling failed, continuing without reprojection: {crs_err}")
 
-            # Import to PostGIS using psycopg2 engine for geometry support
-            psycopg2_url = make_psycopg2_url(DATABASE_URL)
-            with create_engine(psycopg2_url).connect() as upload_conn:
+            # Import to PostGIS using psycopg3 engine for geometry support
+            psycopg3_url = make_psycopg3_url(DATABASE_URL)
+            with create_engine(psycopg3_url).connect() as upload_conn:
                 gdf.to_postgis(
                     name=table_name,
                     con=upload_conn,

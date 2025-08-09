@@ -105,17 +105,17 @@ class ShapefileImporter:
             
             print(f"[INFO] Importing shapefile to table: {table_name}")
             
-            # Import using psycopg2 engine for geometry support
-            psycopg2_url = self.database_url
-            if psycopg2_url.startswith('postgres://'):
-                psycopg2_url = 'postgresql://' + psycopg2_url[len('postgres://'):]
-            # Remove any explicit driver to use default psycopg2
-            if '+pg8000' in psycopg2_url:
-                psycopg2_url = psycopg2_url.replace('+pg8000', '')
-            elif '+psycopg' in psycopg2_url:
-                psycopg2_url = psycopg2_url.replace('+psycopg', '')
+            # Import using psycopg3 engine for geometry support
+            psycopg3_url = self.database_url
+            if psycopg3_url.startswith('postgres://'):
+                psycopg3_url = 'postgresql://' + psycopg3_url[len('postgres://'):]
+            # Remove any explicit driver to use default with psycopg3
+            if '+pg8000' in psycopg3_url:
+                psycopg3_url = psycopg3_url.replace('+pg8000', '')
+            elif '+psycopg2' in psycopg3_url:
+                psycopg3_url = psycopg3_url.replace('+psycopg2', '')
             
-            with create_engine(psycopg2_url).connect() as upload_conn:
+            with create_engine(psycopg3_url).connect() as upload_conn:
                 gdf.to_postgis(
                     name=table_name,
                     con=upload_conn,
