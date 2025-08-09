@@ -1,5 +1,6 @@
 import os
 import geopandas as gpd
+from geoalchemy2 import Geometry
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
@@ -104,25 +105,15 @@ class ShapefileImporter:
             
             print(f"[INFO] Importing shapefile to table: {table_name}")
             
-            # Import to database using psycopg driver (pg8000 doesn't handle geometry adapters here)
-            psycopg_url = self.database_url
-            if psycopg_url.startswith('postgres://'):
-                psycopg_url = 'postgresql://' + psycopg_url[len('postgres://'):]
-            # Force psycopg regardless of existing driver
-            if psycopg_url.startswith('postgresql+pg8000://'):
-                psycopg_url = psycopg_url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
-            elif psycopg_url.startswith('postgresql+psycopg2://'):
-                psycopg_url = psycopg_url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
-            elif psycopg_url.startswith('postgresql://') and '+psycopg' not in psycopg_url:
-                psycopg_url = psycopg_url.replace('postgresql://', 'postgresql+psycopg://', 1)
-
-            with create_engine(psycopg_url).connect() as upload_conn:
-                gdf.to_postgis(
-                    name=table_name,
-                    con=upload_conn,
-                    if_exists='replace',  # Replace if table already exists
-                    index=False
-                )
+            # Import using existing engine and explicit Geometry dtype
+            geom_col = 'geometry' if 'geometry' in gdf.columns else gdf.geometry.name
+            gdf.to_postgis(
+                name=table_name,
+                con=self.engine,
+                if_exists='replace',  # Replace if table already exists
+                index=False,
+                dtype={geom_col: Geometry(geometry_type='GEOMETRY', srid=4326)}
+            )
             
             print(f"[SUCCESS] Shapefile imported successfully to table '{table_name}'!")
             

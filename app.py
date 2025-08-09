@@ -5,6 +5,7 @@ import zipfile
 import io
 from sqlalchemy import create_engine, text, inspect
 from dotenv import load_dotenv
+from geoalchemy2 import Geometry
 import json
 import geopandas as gpd
 from werkzeug.utils import secure_filename
@@ -46,21 +47,14 @@ if DATABASE_URL.startswith('postgresql://') and '+pg8000' not in DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 
-def make_psycopg_url(base_url: str) -> str:
-    """Return a SQLAlchemy URL that forces the psycopg (psycopg3) driver.
-    Keeps credentials/params intact, only adjusts scheme.
-    """
-    url = base_url
-    if url.startswith('postgres://'):
-        url = 'postgresql://' + url[len('postgres://'):]
-    # Force psycopg regardless of existing driver
-    if url.startswith('postgresql+pg8000://'):
-        url = url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
-    elif url.startswith('postgresql+psycopg2://'):
-        url = url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
-    elif url.startswith('postgresql://') and '+psycopg' not in url:
-        url = url.replace('postgresql://', 'postgresql+psycopg://', 1)
-    return url
+def _infer_geometry_column(gdf):
+    for candidate in ['geometry', 'geom', 'the_geom', 'wkb_geometry']:
+        if candidate in gdf.columns:
+            return candidate
+    # fallback to GeoDataFrame active geometry
+    if hasattr(gdf, 'geometry'):
+        return gdf.geometry.name
+    return 'geometry'
 
 @app.route('/')
 def index():
@@ -549,16 +543,15 @@ def process_shapefile_upload(zip_filepath, upload_id):
             except Exception as crs_err:
                 print(f"[WARN] CRS handling failed, continuing without reprojection: {crs_err}")
 
-            # Import to PostGIS
-            # Use a psycopg (psycopg3) engine for geometry uploads; pg8000 lacks PostGIS adapters
-            psycopg_url = make_psycopg_url(DATABASE_URL)
-            with create_engine(psycopg_url).connect() as upload_conn:
-                gdf.to_postgis(
-                    name=table_name,
-                    con=upload_conn,
-                    if_exists='replace',
-                    index=False
-                )
+            # Import to PostGIS using pg8000 engine with explicit Geometry dtype
+            geom_col = _infer_geometry_column(gdf)
+            gdf.to_postgis(
+                name=table_name,
+                con=engine,
+                if_exists='replace',
+                index=False,
+                dtype={geom_col: Geometry(geometry_type='GEOMETRY', srid=4326)}
+            )
             
             return {
                 'success': True,
