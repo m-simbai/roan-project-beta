@@ -529,6 +529,21 @@ def process_shapefile_upload(zip_filepath, upload_id):
             if len(gdf) == 0:
                 return {'success': False, 'error': 'Shapefile contains no features'}
             
+            # Ensure CRS is WGS84 for web mapping compatibility
+            try:
+                if gdf.crs is None:
+                    # Try to let GeoPandas infer from .prj; if still None, proceed but warn
+                    print("[WARN] Uploaded shapefile has no CRS; attempting import as-is. Consider including a .prj file.")
+                else:
+                    epsg = gdf.crs.to_epsg()
+                    if epsg is None:
+                        # Non-EPSG CRS: reproject via WGS84 if possible
+                        gdf = gdf.to_crs(4326)
+                    elif epsg != 4326:
+                        gdf = gdf.to_crs(4326)
+            except Exception as crs_err:
+                print(f"[WARN] CRS handling failed, continuing without reprojection: {crs_err}")
+
             # Import to PostGIS
             # Use a psycopg (psycopg3) engine for geometry uploads; pg8000 lacks PostGIS adapters
             psycopg_url = make_psycopg_url(DATABASE_URL)

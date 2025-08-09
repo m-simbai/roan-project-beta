@@ -85,6 +85,18 @@ class ShapefileImporter:
         try:
             # Read the shapefile
             gdf = gpd.read_file(shapefile_path)
+
+            # Reproject to WGS84 if needed for web mapping compatibility
+            try:
+                if gdf.crs is None:
+                    print("[WARN] Shapefile has no CRS; proceeding as-is. Include .prj for best results.")
+                else:
+                    epsg = gdf.crs.to_epsg()
+                    if epsg is None or epsg != 4326:
+                        gdf = gdf.to_crs(4326)
+                        print("[INFO] Reprojected shapefile to EPSG:4326 (WGS84).")
+            except Exception as crs_err:
+                print(f"[WARN] CRS handling failed, continuing without reprojection: {crs_err}")
             
             # Generate table name if not provided
             if table_name is None:
@@ -92,13 +104,20 @@ class ShapefileImporter:
             
             print(f"[INFO] Importing shapefile to table: {table_name}")
             
-            # Import to database
-            gdf.to_postgis(
-                name=table_name,
-                con=self.engine,
-                if_exists='replace',  # Replace if table already exists
-                index=False
-            )
+            # Import to database using psycopg driver (pg8000 doesn't handle geometry adapters here)
+            psycopg_url = self.database_url
+            if psycopg_url.startswith('postgres://'):
+                psycopg_url = 'postgresql://' + psycopg_url[len('postgres://'):]
+            if psycopg_url.startswith('postgresql://') and '+psycopg' not in psycopg_url and '+psycopg2' not in psycopg_url:
+                psycopg_url = psycopg_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+
+            with create_engine(psycopg_url).connect() as upload_conn:
+                gdf.to_postgis(
+                    name=table_name,
+                    con=upload_conn,
+                    if_exists='replace',  # Replace if table already exists
+                    index=False
+                )
             
             print(f"[SUCCESS] Shapefile imported successfully to table '{table_name}'!")
             
