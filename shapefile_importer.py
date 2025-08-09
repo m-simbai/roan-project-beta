@@ -108,7 +108,12 @@ class ShapefileImporter:
             psycopg_url = self.database_url
             if psycopg_url.startswith('postgres://'):
                 psycopg_url = 'postgresql://' + psycopg_url[len('postgres://'):]
-            if psycopg_url.startswith('postgresql://') and '+psycopg' not in psycopg_url and '+psycopg2' not in psycopg_url:
+            # Force psycopg regardless of existing driver
+            if psycopg_url.startswith('postgresql+pg8000://'):
+                psycopg_url = psycopg_url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
+            elif psycopg_url.startswith('postgresql+psycopg2://'):
+                psycopg_url = psycopg_url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
+            elif psycopg_url.startswith('postgresql://') and '+psycopg' not in psycopg_url:
                 psycopg_url = psycopg_url.replace('postgresql://', 'postgresql+psycopg://', 1)
 
             with create_engine(psycopg_url).connect() as upload_conn:

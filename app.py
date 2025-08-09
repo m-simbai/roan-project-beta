@@ -53,7 +53,12 @@ def make_psycopg_url(base_url: str) -> str:
     url = base_url
     if url.startswith('postgres://'):
         url = 'postgresql://' + url[len('postgres://'):]
-    if url.startswith('postgresql://') and '+psycopg' not in url and '+psycopg2' not in url:
+    # Force psycopg regardless of existing driver
+    if url.startswith('postgresql+pg8000://'):
+        url = url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
+    elif url.startswith('postgresql+psycopg2://'):
+        url = url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
+    elif url.startswith('postgresql://') and '+psycopg' not in url:
         url = url.replace('postgresql://', 'postgresql+psycopg://', 1)
     return url
 
