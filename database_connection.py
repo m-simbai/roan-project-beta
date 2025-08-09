@@ -1,6 +1,6 @@
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -15,14 +15,14 @@ class DatabaseConnection:
     def connect(self):
         """Establish connection to PostgreSQL database"""
         try:
-            self.connection = psycopg2.connect(
+            self.connection = psycopg.connect(
                 self.database_url,
-                cursor_factory=RealDictCursor
+                row_factory=dict_row
             )
             self.cursor = self.connection.cursor()
             print("[SUCCESS] Successfully connected to PostgreSQL database!")
             return True
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             print(f"[ERROR] Error connecting to database: {e}")
             return False
     
@@ -39,7 +39,7 @@ class DatabaseConnection:
         try:
             self.cursor.execute(query, params)
             return self.cursor.fetchall()
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             print(f"[ERROR] Error executing query: {e}")
             return None
     
@@ -50,7 +50,7 @@ class DatabaseConnection:
             self.connection.commit()
             print("[SUCCESS] Command executed successfully!")
             return True
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             print(f"[ERROR] Error executing command: {e}")
             self.connection.rollback()
             return False

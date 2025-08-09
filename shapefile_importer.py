@@ -2,7 +2,6 @@ import os
 import geopandas as gpd
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-import psycopg2
 
 # Load environment variables
 load_dotenv()
@@ -15,7 +14,14 @@ class ShapefileImporter:
     def create_engine_connection(self):
         """Create SQLAlchemy engine for GeoPandas"""
         try:
-            self.engine = create_engine(self.database_url)
+            db_url = self.database_url
+            # Normalize for SQLAlchemy psycopg3
+            if db_url.startswith('postgres://'):
+                db_url = 'postgresql://' + db_url[len('postgres://'):]
+            if db_url.startswith('postgresql://') and '+psycopg' not in db_url and '+psycopg2' not in db_url:
+                db_url = db_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+
+            self.engine = create_engine(db_url)
             print("[SUCCESS] SQLAlchemy engine created successfully!")
             return True
         except Exception as e:
