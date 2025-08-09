@@ -1,9 +1,9 @@
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 geopandas==0.14.4
-sqlalchemy==2.0.25
-GeoAlchemy2==0.15.2
+sqlalchemy==1.4.53
+GeoAlchemy2==0.13.5
 Flask==3.0.0
-Flask-SQLAlchemy==3.1.1
+Flask-SQLAlchemy==3.0.5
 fiona==1.9.5
 werkzeug==3.0.1

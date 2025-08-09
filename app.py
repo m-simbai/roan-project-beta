@@ -658,7 +658,7 @@ def search_database():
                                 sample_records = sample_result.fetchall()
                                 
                                 for record in sample_records:
-                                    record_dict = dict(record._mapping)
+                                    record_dict = dict(record)
                                     # Find which columns contain the search term
                                     matching_fields = {}
                                     for col in search_cols:
