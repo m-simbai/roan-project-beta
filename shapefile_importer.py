@@ -15,11 +15,11 @@ class ShapefileImporter:
         """Create SQLAlchemy engine for GeoPandas"""
         try:
             db_url = self.database_url
-            # Normalize for SQLAlchemy psycopg3
+            # Normalize for SQLAlchemy with pg8000 driver
             if db_url.startswith('postgres://'):
                 db_url = 'postgresql://' + db_url[len('postgres://'):]
-            if db_url.startswith('postgresql://') and '+psycopg' not in db_url and '+psycopg2' not in db_url:
-                db_url = db_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+            if db_url.startswith('postgresql://') and '+pg8000' not in db_url:
+                db_url = db_url.replace('postgresql://', 'postgresql+pg8000://', 1)
 
             self.engine = create_engine(db_url)
             print("[SUCCESS] SQLAlchemy engine created successfully!")

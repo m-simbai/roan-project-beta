@@ -35,14 +35,14 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is required")
 
-# Normalize for psycopg3 driver on SQLAlchemy 1.4
+# Normalize database URL for SQLAlchemy
 # 1) Render may provide postgres://; SQLAlchemy expects postgresql://
-# 2) Default PostgreSQL dialect in SQLAlchemy 1.4 is psycopg2. We force psycopg3.
+# 2) Default PostgreSQL dialect in SQLAlchemy 1.4 is psycopg2. Force a pure-Python driver (pg8000) available in our deps.
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = 'postgresql://' + DATABASE_URL[len('postgres://'):]
 
-if DATABASE_URL.startswith('postgresql://') and '+psycopg' not in DATABASE_URL and '+psycopg2' not in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg://', 1)
+if DATABASE_URL.startswith('postgresql://') and '+pg8000' not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+pg8000://', 1)
 
 engine = create_engine(DATABASE_URL)
 
