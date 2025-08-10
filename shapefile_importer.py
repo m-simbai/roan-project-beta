@@ -16,11 +16,15 @@ class ShapefileImporter:
         """Create SQLAlchemy engine for GeoPandas"""
         try:
             db_url = self.database_url
-            # Normalize for SQLAlchemy with pg8000 driver
+            # Normalize for SQLAlchemy 2.x with psycopg3 driver
             if db_url.startswith('postgres://'):
                 db_url = 'postgresql://' + db_url[len('postgres://'):]
-            if db_url.startswith('postgresql://') and '+pg8000' not in db_url:
-                db_url = db_url.replace('postgresql://', 'postgresql+pg8000://', 1)
+            if db_url.startswith('postgresql+pg8000://'):
+                db_url = db_url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
+            elif db_url.startswith('postgresql+psycopg2://'):
+                db_url = db_url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
+            elif db_url.startswith('postgresql://') and '+psycopg' not in db_url:
+                db_url = db_url.replace('postgresql://', 'postgresql+psycopg://', 1)
 
             self.engine = create_engine(db_url)
             print("[SUCCESS] SQLAlchemy engine created successfully!")
@@ -105,15 +109,16 @@ class ShapefileImporter:
             
             print(f"[INFO] Importing shapefile to table: {table_name}")
             
-            # Import using psycopg3 engine for geometry support
+            # Import using psycopg3 engine for geometry support (explicit driver)
             psycopg3_url = self.database_url
             if psycopg3_url.startswith('postgres://'):
                 psycopg3_url = 'postgresql://' + psycopg3_url[len('postgres://'):]
-            # Remove any explicit driver to use default with psycopg3
-            if '+pg8000' in psycopg3_url:
-                psycopg3_url = psycopg3_url.replace('+pg8000', '')
-            elif '+psycopg2' in psycopg3_url:
-                psycopg3_url = psycopg3_url.replace('+psycopg2', '')
+            if psycopg3_url.startswith('postgresql+pg8000://'):
+                psycopg3_url = psycopg3_url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
+            elif psycopg3_url.startswith('postgresql+psycopg2://'):
+                psycopg3_url = psycopg3_url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
+            elif psycopg3_url.startswith('postgresql://') and '+psycopg' not in psycopg3_url:
+                psycopg3_url = psycopg3_url.replace('postgresql://', 'postgresql+psycopg://', 1)
             
             with create_engine(psycopg3_url).connect() as upload_conn:
                 gdf.to_postgis(

@@ -1,10 +1,8 @@
 psycopg==3.2.3
-psycopg-binary==3.2.3
-pg8000==1.31.2
 python-dotenv==1.0.0
 geopandas==0.14.4
-sqlalchemy==1.4.53
-GeoAlchemy2==0.13.3
+sqlalchemy>=2.0.0
+GeoAlchemy2>=0.14.6
 Flask==3.0.0
 Flask-SQLAlchemy==3.0.5
 fiona==1.9.5

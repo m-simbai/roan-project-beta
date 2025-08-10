@@ -36,14 +36,17 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is required")
 
-# Normalize database URL for SQLAlchemy
-# 1) Render may provide postgres://; SQLAlchemy expects postgresql://
-# 2) Default PostgreSQL dialect in SQLAlchemy 1.4 is psycopg2. Force a pure-Python driver (pg8000) available in our deps.
+# Normalize database URL for SQLAlchemy 2.x + psycopg3
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = 'postgresql://' + DATABASE_URL[len('postgres://'):]
 
-if DATABASE_URL.startswith('postgresql://') and '+pg8000' not in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+pg8000://', 1)
+# Force psycopg driver explicitly
+if DATABASE_URL.startswith('postgresql+pg8000://'):
+    DATABASE_URL = DATABASE_URL.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
+elif DATABASE_URL.startswith('postgresql+psycopg2://'):
+    DATABASE_URL = DATABASE_URL.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
+elif DATABASE_URL.startswith('postgresql://') and '+psycopg' not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg://', 1)
 
 engine = create_engine(DATABASE_URL)
 
@@ -52,12 +55,13 @@ def make_psycopg3_url(base_url: str) -> str:
     url = base_url
     if url.startswith('postgres://'):
         url = 'postgresql://' + url[len('postgres://'):]
-    # Force psycopg3 by removing other drivers and using default postgresql://
-    if '+pg8000' in url:
-        url = url.replace('+pg8000', '')
-    elif '+psycopg2' in url:
-        url = url.replace('+psycopg2', '')
-    # Don't add +psycopg, let SQLAlchemy use default with psycopg3 installed
+    # Force psycopg driver
+    if url.startswith('postgresql+pg8000://'):
+        url = url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
+    elif url.startswith('postgresql+psycopg2://'):
+        url = url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
+    elif url.startswith('postgresql://') and '+psycopg' not in url:
+        url = url.replace('postgresql://', 'postgresql+psycopg://', 1)
     return url
 
 @app.route('/')
