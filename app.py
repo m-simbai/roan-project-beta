@@ -553,13 +553,34 @@ def process_shapefile_upload(zip_filepath, upload_id):
 
             # Import to PostGIS using psycopg3 engine for geometry support
             psycopg3_url = make_psycopg3_url(DATABASE_URL)
-            with create_engine(psycopg3_url).connect() as upload_conn:
-                gdf.to_postgis(
-                    name=table_name,
-                    con=upload_conn,
-                    if_exists='replace',
-                    index=False
-                )
+            try:
+                with create_engine(psycopg3_url).connect() as upload_conn:
+                    gdf.to_postgis(
+                        name=table_name,
+                        con=upload_conn,
+                        if_exists='replace',
+                        index=False
+                    )
+            except AttributeError as ae:
+                # psycopg3 cursor lacks copy_expert; fallback to WKT temp table then convert
+                if 'copy_expert' in str(ae):
+                    tmp_table = f"{table_name}__wkt_tmp"
+                    df = gdf.drop(columns=['geometry']).copy()
+                    df['__geometry_wkt'] = gdf.geometry.to_wkt()
+                    with create_engine(psycopg3_url).begin() as conn:
+                        # Write temp table
+                        df.to_sql(tmp_table, conn, if_exists='replace', index=False)
+                        # Create final table with geometry from WKT
+                        # Build column list excluding wkt helper
+                        non_geom_cols = ', '.join([f'"{c}"' for c in df.columns if c != '__geometry_wkt'])
+                        select_cols = non_geom_cols + (', ' if non_geom_cols else '') + "ST_GeomFromText(__geometry_wkt, 4326)::geometry AS geometry"
+                        conn.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE;'))
+                        conn.execute(text(f'CREATE TABLE "{table_name}" AS SELECT {select_cols} FROM "{tmp_table}";'))
+                        # Add spatial index (optional)
+                        conn.execute(text(f'CREATE INDEX IF NOT EXISTS "{table_name}_geom_gix" ON "{table_name}" USING GIST (geometry);'))
+                        conn.execute(text(f'DROP TABLE IF EXISTS "{tmp_table}";'))
+                else:
+                    raise
             
             return {
                 'success': True,
