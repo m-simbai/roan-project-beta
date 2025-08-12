@@ -436,7 +436,8 @@ def map_view(table_name):
                                  map_bounds=map_bounds,
                                  total_count=total_count,
                                  filter_query=filter_query,
-                                 filter_type=filter_type)
+                                 filter_type=filter_type,
+                                 google_maps_api_key=os.getenv('GOOGLE_MAPS_API_KEY'))
     except Exception as e:
         return f"Error loading map for table {table_name}: {e}"
 
