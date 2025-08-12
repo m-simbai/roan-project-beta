@@ -106,210 +106,160 @@
 {% endblock %}
 
 {% block scripts %}
-<!-- Leaflet CSS and JS -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Google Maps API -->
+<script
+    src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initMap"
+    async defer></script>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize map
-    const map = L.map('map').setView([0, 0], 2);
-    
-    // Add base layers
-    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-    });
-    
-    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: '© Esri, Maxar, Earthstar Geographics'
-    });
-    
-    // Add default layer
-    osmLayer.addTo(map);
-    
-    // Layer control
-    const baseLayers = {
-        "OpenStreetMap": osmLayer,
-        "Satellite": satelliteLayer
-    };
-    
-    const overlayLayers = {};
-    const layerControl = L.control.layers(baseLayers, overlayLayers).addTo(map);
-    
-    // Feature group for data
-    const dataLayer = L.featureGroup().addTo(map);
-    
-    // Map bounds from server
-    const mapBounds = {% if map_bounds %}{{ map_bounds | tojson | safe }}{% else %}null{% endif %};
-    
-    // Filter parameters
-    const filterQuery = '{{ filter_query | safe }}';
-    const filterType = '{{ filter_type | safe }}';
-    let isFiltered = filterType === 'search' && filterQuery !== '';
-    
-    // Function to load GeoJSON data
-    function loadMapData(useFilter = isFiltered) {
-        const apiUrl = useFilter && filterQuery ? 
-            `/api/geojson/{{ table_name }}/filtered?q=${encodeURIComponent(filterQuery)}` : 
-            `/api/geojson/{{ table_name }}`;
-        
-        // Clear existing data
-        dataLayer.clearLayers();
-        document.getElementById('map-status').innerHTML = '<span class="text-warning">Loading...</span>';
-        
-        fetch(apiUrl)
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                document.getElementById('map-status').innerHTML = '<span class="text-danger">Error</span>';
-                console.error('Error loading data:', data.error);
-                return;
+    let map;
+
+    function initMap() {
+        // Initialize map
+        map = new google.maps.Map(document.getElementById('map'), {
+            center: { lat: 0, lng: 0 },
+            zoom: 2,
+            mapTypeId: 'roadmap', // Default map type
+            mapTypeControl: false, // Disable default map type control
+            streetViewControl: false // Disable street view
+        });
+
+        // Custom layer control
+        const toggleLayersBtn = document.getElementById('toggle-layers');
+        toggleLayersBtn.addEventListener('click', () => {
+            const currentMapTypeId = map.getMapTypeId();
+            if (currentMapTypeId === 'roadmap') {
+                map.setMapTypeId('satellite');
+                toggleLayersBtn.innerHTML = '<i class="fas fa-map"></i> Map View';
+            } else {
+                map.setMapTypeId('roadmap');
+                toggleLayersBtn.innerHTML = '<i class="fas fa-layer-group"></i> Layers';
             }
-            
-            // Style function for features
-            function getFeatureStyle(feature) {
-                const geomType = feature.geometry.type;
-                
-                if (geomType === 'Polygon' || geomType === 'MultiPolygon') {
-                    return {
-                        fillColor: '#3388ff',
-                        weight: 2,
-                        opacity: 1,
-                        color: '#0066cc',
-                        fillOpacity: 0.3
-                    };
-                } else if (geomType === 'LineString' || geomType === 'MultiLineString') {
-                    return {
-                        color: '#ff7800',
-                        weight: 3,
-                        opacity: 0.8
-                    };
-                } else {
-                    return {
-                        radius: 6,
-                        fillColor: '#ff7800',
-                        color: '#000',
-                        weight: 1,
-                        opacity: 1,
-                        fillOpacity: 0.8
-                    };
-                }
-            }
-            
-            // Add GeoJSON to map
-            const geoJsonLayer = L.geoJSON(data, {
-                style: getFeatureStyle,
-                pointToLayer: function(feature, latlng) {
-                    return L.circleMarker(latlng);
-                },
-                onEachFeature: function(feature, layer) {
-                    // Create popup content
-                    let popupContent = '<div class="feature-popup">';
-                    popupContent += '<h6><i class="fas fa-map-marker-alt"></i> Feature Details</h6>';
-                    
-                    if (feature.properties && Object.keys(feature.properties).length > 0) {
-                        popupContent += '<table class="table table-sm">';
-                        for (const [key, value] of Object.entries(feature.properties)) {
-                            if (value !== null && value !== undefined) {
-                                popupContent += `<tr><td><strong>${key}:</strong></td><td>${value}</td></tr>`;
-                            }
-                        }
-                        popupContent += '</table>';
-                    } else {
-                        popupContent += '<p class="text-muted">No additional properties</p>';
-                    }
-                    
-                    popupContent += `<small class="text-muted">Geometry: ${feature.geometry.type}</small>`;
-                    popupContent += '</div>';
-                    
-                    layer.bindPopup(popupContent);
-                    
-                    // Click event for feature info panel
-                    layer.on('click', function(e) {
-                        showFeatureInfo(feature);
-                    });
-                }
+        });
+
+        // Filter parameters
+        const filterQuery = '{{ filter_query | safe }}';
+        const filterType = '{{ filter_type | safe }}';
+        let isFiltered = filterType === 'search' && filterQuery !== '';
+
+        // Function to load GeoJSON data
+        function loadMapData(useFilter = isFiltered) {
+            const apiUrl = useFilter && filterQuery ?
+                `/api/geojson/{{ table_name }}/filtered?q=${encodeURIComponent(filterQuery)}` :
+                `/api/geojson/{{ table_name }}`;
+
+            // Clear existing data
+            map.data.forEach(feature => {
+                map.data.remove(feature);
             });
-            
-            geoJsonLayer.addTo(dataLayer);
-            
-            // Update map status
-            const statusText = data.filter_applied ? 
-                `<span class="text-success">Loaded ${data.features.length} filtered features</span>` :
-                `<span class="text-success">Loaded ${data.features.length} features</span>`;
-            document.getElementById('map-status').innerHTML = statusText;
-            
-            // Fit map to data bounds if available
-            if (dataLayer.getLayers().length > 0) {
-                try {
-                    // Try to use server-provided bounds first
-                    if (mapBounds && Array.isArray(mapBounds) && mapBounds.length === 2) {
-                        const [[minLat, minLng], [maxLat, maxLng]] = mapBounds;
-                        if (minLat !== null && minLng !== null && maxLat !== null && maxLng !== null) {
-                            map.fitBounds(mapBounds, { padding: [20, 20] });
-                        } else {
-                            // Fall back to data layer bounds
-                            const bounds = dataLayer.getBounds();
-                            if (bounds.isValid()) {
-                                map.fitBounds(bounds, { padding: [20, 20] });
-                            }
-                        }
-                    } else {
-                        // Use data layer bounds
-                        const bounds = dataLayer.getBounds();
-                        if (bounds.isValid()) {
-                            map.fitBounds(bounds, { padding: [20, 20] });
-                        }
-                    }
-                } catch (error) {
-                    console.warn('Could not fit map bounds:', error);
-                    // Set a default view if bounds fitting fails
-                    map.setView([0, 0], 2);
+
+            document.getElementById('map-status').innerHTML = '<span class="text-warning">Loading...</span>';
+
+            // Load GeoJSON data
+            map.data.loadGeoJson(apiUrl, null, (features) => {
+                if (features.length === 0) {
+                    document.getElementById('map-status').innerHTML = '<span class="text-warning">No features found</span>';
+                    return;
                 }
-            } else {
-                document.getElementById('map-status').innerHTML = '<span class="text-warning">No features found</span>';
-            }
-        })
-        .catch(error => {
-            console.error('Error loading GeoJSON:', error);
-            document.getElementById('map-status').innerHTML = '<span class="text-danger">Error</span>';
-        });
-    }
-    
-    // Initial data load
-    loadMapData();
-    
-    // Filter toggle button event handler
-    const toggleFilterBtn = document.getElementById('toggle-filter-btn');
-    if (toggleFilterBtn) {
-        toggleFilterBtn.addEventListener('click', function() {
-            isFiltered = !isFiltered;
-            
-            // Update button text and icon
-            const filterIcon = document.getElementById('filter-icon');
-            const filterText = document.getElementById('filter-text');
-            
-            if (isFiltered) {
-                filterIcon.className = 'fas fa-eye-slash';
-                filterText.textContent = 'Show All';
-            } else {
-                filterIcon.className = 'fas fa-eye';
-                filterText.textContent = 'Show Filtered';
-            }
-            
-            // Reload map data with new filter state
-            loadMapData(isFiltered);
-        });
-    }
-    
-    // Fit bounds button
-    document.getElementById('fit-bounds-btn').addEventListener('click', function() {
-        if (dataLayer.getLayers().length > 0) {
-            map.fitBounds(dataLayer.getBounds(), { padding: [20, 20] });
+
+                const statusText = useFilter ?
+                    `<span class="text-success">Loaded ${features.length} filtered features</span>` :
+                    `<span class="text-success">Loaded ${features.length} features</span>`;
+                document.getElementById('map-status').innerHTML = statusText;
+
+                // Fit map to data bounds
+                const bounds = new google.maps.LatLngBounds();
+                features.forEach(feature => {
+                    processPoints(feature.getGeometry(), bounds.extend, bounds);
+                });
+                map.fitBounds(bounds);
+            });
         }
-    });
+        
+        // Helper function to process geometries for bounds calculation
+        function processPoints(geometry, callback, thisArg) {
+            if (geometry instanceof google.maps.LatLng) {
+                callback.call(thisArg, geometry);
+            } else if (geometry instanceof google.maps.Data.Point) {
+                callback.call(thisArg, geometry.get());
+            } else {
+                geometry.getArray().forEach(g => {
+                    processPoints(g, callback, thisArg);
+                });
+            }
+        }
+
+        // Initial data load
+        loadMapData();
+
+        // Filter toggle button event handler
+        const toggleFilterBtn = document.getElementById('toggle-filter-btn');
+        if (toggleFilterBtn) {
+            toggleFilterBtn.addEventListener('click', function() {
+                isFiltered = !isFiltered;
+
+                // Update button text and icon
+                const filterIcon = document.getElementById('filter-icon');
+                const filterText = document.getElementById('filter-text');
+                
+                if (isFiltered) {
+                    filterIcon.className = 'fas fa-eye-slash';
+                    filterText.textContent = 'Show All';
+                } else {
+                    filterIcon.className = 'fas fa-eye';
+                    filterText.textContent = 'Show Filtered';
+                }
+
+                // Reload map data with new filter state
+                loadMapData(isFiltered);
+            });
+        }
     
-    // Show feature information
+        // Fit bounds button
+        document.getElementById('fit-bounds-btn').addEventListener('click', () => {
+            const bounds = new google.maps.LatLngBounds();
+            map.data.forEach(feature => {
+                processPoints(feature.getGeometry(), bounds.extend, bounds);
+            });
+            map.fitBounds(bounds);
+        });
+
+        // Show feature information on click
+        map.data.addListener('click', event => {
+            showFeatureInfo(event.feature);
+        });
+
+        // Style features
+        map.data.setStyle(feature => {
+            const geomType = feature.getGeometry().getType();
+            let style = {
+                clickable: true,
+                strokeColor: '#3388ff',
+                strokeOpacity: 1,
+                strokeWeight: 2,
+                fillColor: '#3388ff',
+                fillOpacity: 0.3
+            };
+
+            if (geomType === 'Point' || geomType === 'MultiPoint') {
+                style.icon = {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 5,
+                    fillColor: '#ff7800',
+                    fillOpacity: 0.8,
+                    strokeColor: '#000',
+                    strokeWeight: 1
+                };
+            } else if (geomType === 'LineString' || geomType === 'MultiLineString') {
+                style.strokeColor = '#ff7800';
+                style.strokeOpacity = 0.8;
+                style.strokeWeight = 3;
+            }
+
+            return style;
+        });
+    }
+
     function showFeatureInfo(feature) {
         const featureInfo = document.getElementById('feature-info');
         const featureDetails = document.getElementById('feature-details');
@@ -317,19 +267,19 @@ document.addEventListener('DOMContentLoaded', function() {
         let content = '<div class="row">';
         content += '<div class="col-md-6">';
         content += '<h6><i class="fas fa-shapes"></i> Geometry</h6>';
-        content += `<p><strong>Type:</strong> ${feature.geometry.type}</p>`;
-        
-        if (feature.geometry.coordinates) {
-            const coordCount = JSON.stringify(feature.geometry.coordinates).split(',').length;
-            content += `<p><strong>Coordinates:</strong> ${coordCount} points</p>`;
-        }
+        content += `<p><strong>Type:</strong> ${feature.getGeometry().getType()}</p>`;
         
         content += '</div>';
         content += '<div class="col-md-6">';
         content += '<h6><i class="fas fa-tags"></i> Properties</h6>';
         
-        if (feature.properties && Object.keys(feature.properties).length > 0) {
-            for (const [key, value] of Object.entries(feature.properties)) {
+        const properties = {};
+        feature.forEachProperty((value, key) => {
+            properties[key] = value;
+        });
+
+        if (Object.keys(properties).length > 0) {
+            for (const [key, value] of Object.entries(properties)) {
                 if (value !== null && value !== undefined) {
                     content += `<p><strong>${key}:</strong> ${value}</p>`;
                 }
@@ -347,43 +297,13 @@ document.addEventListener('DOMContentLoaded', function() {
         // Scroll to feature info
         featureInfo.scrollIntoView({ behavior: 'smooth' });
     }
-    
-    // Toggle layers button
-    document.getElementById('toggle-layers').addEventListener('click', function() {
-        // This could be expanded to show/hide different data layers
-        if (map.hasLayer(dataLayer)) {
-            map.removeLayer(dataLayer);
-            this.innerHTML = '<i class="fas fa-eye-slash"></i> Show Data';
-        } else {
-            map.addLayer(dataLayer);
-            this.innerHTML = '<i class="fas fa-layer-group"></i> Layers';
-        }
-    });
-});
+
+    // Assign initMap to window to make it accessible by Google Maps API callback
+    window.initMap = initMap;
 </script>
 
 <style>
-.feature-popup {
-    max-width: 300px;
-}
-
-.feature-popup .table {
-    margin-bottom: 0.5rem;
-}
-
-.feature-popup .table td {
-    padding: 0.25rem;
-    border-top: 1px solid #dee2e6;
-}
-
-.leaflet-popup-content-wrapper {
-    border-radius: 8px;
-}
-
-.leaflet-popup-content {
-    margin: 8px 12px;
-}
-
+/* Custom styles for Google Maps integration */
 #map {
     border-radius: 0 0 0.375rem 0.375rem;
 }
