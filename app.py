@@ -66,6 +66,36 @@ def make_psycopg3_url(base_url: str) -> str:
 
 @app.route('/')
 def index():
+    """Main page showing the interactive map"""
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+
+            # Filter out PostGIS system tables
+            user_tables = [t for t in tables if not t.startswith(('spatial_ref_sys', 'geography_columns', 'geometry_columns'))]
+
+            spatial_tables = []
+            for table in user_tables:
+                col_result = conn.execute(text(f"""
+                    SELECT udt_name
+                    FROM information_schema.columns
+                    WHERE table_name = '{table}' AND udt_name IN ('geometry', 'geography')
+                """))
+                if col_result.scalar():
+                    spatial_tables.append(table)
+
+            return render_template(
+                'main_map.html',
+                tables=spatial_tables,
+                google_maps_api_key=os.getenv('GOOGLE_MAPS_API_KEY')
+            )
+    except Exception as e:
+        # Fallback to a simple error page if DB connection fails
+        return f"Database connection error: {e}", 500
+
+@app.route('/tables')
+def tables_list():
     """Main page showing database overview"""
     try:
         with engine.connect() as conn:

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Interactive Map{% endblock %}
+
+{% block head_styles %}
+<style>
+    /* Reset browser defaults */
+    html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden; /* Prevent scrollbars */
+    }
+    /* Make container full screen */
+    .map-container {
+        height: 100vh;
+        width: 100vw;
+    }
+    #map {
+        height: 100%;
+        width: 100%;
+    }
+    /* Search bar container */
+    .search-container {
+        position: absolute;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        background: white;
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .search-container select {
+        padding: 8px 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 1rem;
+        min-width: 300px;
+    }
+    /* Layer toggle button */
+    .layer-toggle-container {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+    .layer-toggle-container button {
+        background: white;
+        border: 1px solid #ccc;
+        padding: 8px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="map-container">
+    <div id="map"
+         data-tables='{{ tables | tojson | safe }}'
+         data-api-key='{{ google_maps_api_key }}'>
+    </div>
+
+    <div class="search-container">
+        <i class="fas fa-search"></i>
+        <select id="table-select">
+            <option value="">Select a dataset to display...</option>
+        </select>
+    </div>
+
+    <div class="layer-toggle-container">
+        <button id="layer-toggle-btn">
+            <i class="fas fa-layer-group"></i> Satellite
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initMap" async defer></script>
+<script src="{{ url_for('static', filename='js/main_map.js') }}"></script>
+{% endblock %}
