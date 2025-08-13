@@ -31,6 +31,13 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# Expose Google Maps API key to all templates
+@app.context_processor
+def inject_google_maps_api_key():
+    return {
+        'GOOGLE_MAPS_API_KEY': os.getenv('GOOGLE_MAPS_API_KEY', '')
+    }
+
 # Database connection
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
