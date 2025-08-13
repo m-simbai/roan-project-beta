@@ -1,15 +1,341 @@
 {% extends "base.html" %}
+{% block head %}
+<style>
+  /* Override navbar display completely - important for full viewport map */
+  body > nav { display: none !important; }
+  body { padding-top: 0 !important; }
+</style>
+{% endblock %}
 
-{% block title %}CCT-Roan Project Beta - Database Overview{% endblock %}
+{% block title %}Roan Project - Map{% endblock %}
 
 {% block content %}
-<!-- Hero Section -->
-<div class="hero-section">
-    <h1 class="hero-title">{{ tables|length }} Tables in Your Database</h1>
-    <p class="hero-subtitle">
-        Discover and explore your spatial and tabular data with our comprehensive database viewer
-    </p>
+<!-- Minimal, Google Maps–style landing: blank page with centered search -->
+<style>
+  .landing-wrapper { display: flex; align-items: center; justify-content: center; min-height: calc(100vh - 80px); }
+  .landing-card { width: min(820px, 92vw); background: white; border: 1px solid var(--border-light); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.06); padding: 0.75rem; }
+  .landing-row { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: center; }
+  .search-input-wrap { position: relative; }
+  .search-input { width: 100%; padding: 0.9rem 1rem 0.9rem 2.5rem; border: 1px solid var(--border-light); border-radius: 8px; outline: none; font-size: 1rem; }
+  .search-input:focus { border-color: var(--primary-teal); box-shadow: 0 0 0 3px rgba(26,188,156,0.12); }
+  .search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--text-light); }
+  .btn-go { padding: 0.8rem 1.2rem; border-radius: 8px; background: #fff; color: var(--primary-teal); border: 1px solid var(--primary-teal); cursor: pointer; font-weight: 600; }
+  .btn-go:hover { background: #f7fffd; box-shadow: 0 0 0 3px rgba(26,188,156,0.12); }
+  .btn-go:focus { outline: none; box-shadow: 0 0 0 3px rgba(26,188,156,0.18); }
+  .btn-go:disabled { opacity: 0.6; cursor: not-allowed; }
+  .hint { margin-top: 0.6rem; color: var(--text-light); font-size: 0.9rem; }
+  /* Hide the old dense landing sections and navbar to keep page visually clean */
+  .hero-section, .search-section, .content-layout, .navbar { display: none !important; }
+  #searchResultsSection { display: none !important; }
+  /* Full-viewport map container */
+  /* Make the map truly full-bleed under the navbar */
+  html, body { height: 100%; margin: 0; padding: 0; width: 100vw; overflow-x: hidden; }
+  /* Neutralize any container gutters and override main container top padding */
+  .main-container { max-width: 100% !important; width: 100% !important; padding: 0 !important; margin: 0 !important; }
+  .main-container > .container { max-width: 100% !important; width: 100% !important; padding: 0 !important; margin: 0 !important; }
+  .landing-map-wrap { position: relative; height: 100vh; width: 100%; margin: 0; top: 0; }
+  #landing-map { height: 100%; width: 100%; }
+  /* Bottom-centered search overlay like Google Maps */
+  .map-search-overlay { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(820px, 92vw); display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem; z-index: 1002; }
+  .map-search-overlay .search-input { background: #fff; }
+  /* Top-left data table panel */
+  .data-table-panel { position: absolute; left: 12px; top: 72px; width: min(420px, 92vw); max-height: 45vh; background: #fff; border: 1px solid var(--border-light); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); z-index: 1003; display: none; overflow: hidden; }
+  .data-table-panel .panel-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--border-light); }
+  .data-table-panel .panel-body { overflow: auto; max-height: calc(45vh - 44px); }
+
+  /* Left tables list sidebar (Google Maps style) */
+  .tables-sidebar { position: fixed; left: 70px; top: 0; width: 360px; height: 100vh; background: #fff; box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15); z-index: 1005; overflow: hidden;
+    transform: translateX(-430px); transition: transform 250ms cubic-bezier(0,0,0.2,1); }
+  /* Blue stripe removed as requested */
+  .tables-sidebar.open { transform: translateX(0); }
+  .tables-sidebar .sidebar-header { display: flex; align-items: center; padding: 22px 22px 16px; border-bottom: 1px solid #e8eaed; }
+  .tables-sidebar .sidebar-title { margin: 0; font-size: 20px; font-weight: 400; color: #3c4043; letter-spacing: 0.15px; flex: 1; font-family: 'Roboto', Arial, sans-serif; }
+  .tables-sidebar .sidebar-body { overflow-y: auto; height: calc(100% - 77px); padding: 8px 0; }
+  .tables-sidebar .table-item { display: flex; align-items: center; padding: 0 24px; height: 48px; cursor: pointer; transition: background 150ms ease; color: #3c4043; font-size: 14px; font-family: 'Roboto', sans-serif; letter-spacing: 0.2px; line-height: 20px; }
+  .tables-sidebar .table-item:hover { background: rgba(60,64,67,0.04); }
+  .tables-sidebar .table-item.disabled { color: #9aa0a6; cursor: not-allowed; }
+  .tables-sidebar .table-item.disabled:hover { background: transparent; }
+  .tables-sidebar .table-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Backdrop overlay */
+  .sidebar-backdrop { position: absolute; inset: 0; top: 0; left: 70px; background: rgba(0,0,0,0.25); z-index: 900; display: none; }
+  .sidebar-backdrop.show { display: block; }
+
+  /* Google Maps style sidebar toggle strip */
+  .tables-stripe { position: fixed; left: 0; top: 0; height: 100vh; width: 70px; background: #fff; z-index: 1005; cursor: pointer; box-shadow: 0 0 10px rgba(0,0,0,0.2); display: flex; flex-direction: column; align-items: center; margin-top: 0; }
+  .tables-stripe-icon { margin-top: 20px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; color: #5f6368; font-size: 18px; }
+  .tables-stripe:hover .tables-stripe-icon { color: #1a73e8; }
+
+  /* Top-left data table panel */
+  .data-table-header { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border-light); }
+  .data-table-title { font-size: 0.95rem; font-weight: 600; color: var(--text-dark); margin: 0; }
+  .data-table-body { overflow: auto; max-height: calc(45vh - 44px); }
+  .data-table-wrapper { width: 100%; overflow: auto; }
+  .data-table { border-collapse: collapse; width: 100%; min-width: 480px; }
+  .data-table th, .data-table td { border: 1px solid #eee; padding: 6px 8px; font-size: 0.85rem; }
+  .data-table th { position: sticky; top: 0; background: #fafafa; z-index: 1; text-align: left; }
+  .leaflet-control.table-toggle-btn { font: inherit; }
+  .table-toggle-btn { display: inline-flex; align-items: center; justify-content: center; width: 68px; height: 68px; padding: 0; background: #fff; border: 1px solid rgba(0,0,0,0.2); border-radius: 6px; cursor: pointer; font-size: 24px; }
+  .table-toggle-btn:focus { outline: none; }
+  /* Row selection styling and pointer */
+  .data-table tbody tr { cursor: pointer; }
+  .data-table tbody tr.selected { background: #fff9e6; }
+  /* Enlarge default Leaflet zoom and layers controls */
+  .leaflet-control-zoom a { width: 56px; height: 56px; line-height: 56px; font-size: 24px; }
+  .leaflet-control-zoom { border-radius: 6px; }
+  .leaflet-control-layers-toggle { width: 56px; height: 56px; background-size: 56px 56px; }
+  /* Keep default layers control visible for base map switching */
+  .leaflet-control-layers { display: block; }
+  /* Make its toggle big too */
+  .leaflet-control-layers-toggle { width: 56px; height: 56px; background-size: 56px 56px; }
+  .leaflet-control-container .leaflet-top { top: 10px; }
+  .leaflet-control-container .leaflet-left { left: 80px; }
+  .leaflet-control-zoom { margin-top: 10px !important; }
+
+  /* Custom Layers Panel (top-right) */
+  .layers-panel { position: absolute; right: 12px; top: 72px; width: min(320px, 90vw); max-height: 45vh; background: #fff; border: 1px solid var(--border-light); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); z-index: 1003; display: none; overflow: hidden; }
+  .layers-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border-light); }
+  .layers-panel-title { font-size: 0.95rem; font-weight: 600; color: var(--text-dark); margin: 0; }
+  .layers-panel-body { overflow: auto; max-height: calc(45vh - 44px); }
+  .layer-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; gap: 8px; }
+  .layer-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dark); font-size: 0.9rem; }
+  .layer-actions { display: inline-flex; gap: 8px; }
+  .layer-action-btn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; background: #fff; border: 1px solid rgba(0,0,0,0.2); border-radius: 6px; cursor: pointer; font-size: 16px; }
+  .layer-action-btn:focus { outline: none; }
+  .layers-toggle-btn { display: inline-flex; align-items: center; justify-content: center; width: 68px; height: 68px; padding: 0; background: #fff; border: 1px solid rgba(0,0,0,0.2); border-radius: 6px; cursor: pointer; font-size: 24px; }
+  /* Enlarge inner icons for custom buttons */
+  .table-toggle-btn i, .layers-toggle-btn i { font-size: 28px; }
+  /* If any down chevrons appear in the bottom bar, rotate them up */
+  .map-search-overlay .fa-chevron-down, .map-search-overlay .fa-caret-down { transform: rotate(180deg); display: inline-block; }
+
+  /* Center page title in navbar and hide Home + Upload buttons safely */
+  nav.navbar .navbar-brand { position: absolute; left: 50%; transform: translateX(-50%); margin: 0; }
+  nav.navbar .fa-home, nav.navbar a[title="Home"], nav.navbar a[title="Upload"], nav.navbar .fa-upload, nav.navbar a[href="/upload"] { display: none !important; }
+  /* Keep brand visible; we'll hide specific 'Home' links via JS below */
+  nav.navbar .navbar-brand, nav.navbar a.navbar-brand { color: inherit; text-shadow: inherit; }
+  nav.navbar .navbar-brand::after { content: initial; }
+
+  /* Upload floating action button (moved to left of search) */
+  .upload-fab { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; line-height: 56px; border-radius: 50%; border: 1px solid var(--border-light); cursor: pointer; box-shadow: 0 6px 16px rgba(0,0,0,0.18); background: #fff; margin-right: 10px; text-decoration: none !important; border-bottom: 0 !important; }
+  .upload-fab:link, .upload-fab:visited, .upload-fab:hover, .upload-fab:active { text-decoration: none !important; border-bottom: 0 !important; }
+  .upload-fab, .upload-fab * { text-decoration: none !important; border: 0; }
+  .upload-fab i, .upload-fab i::before { font-size: 22px; color: #0078D4; text-decoration: none !important; display: inline-block; line-height: 1; vertical-align: middle; -webkit-font-smoothing: antialiased; }
+  .upload-fab:focus { outline: none; box-shadow: 0 0 0 3px rgba(0,120,212,0.15), 0 6px 16px rgba(0,0,0,0.18); }
+  .upload-fab:hover { background: #fff; text-decoration: none; }
+
+  /* Search suggestions styling to match search bar */
+  .map-search-overlay .search-suggestions, .map-search-overlay .dropdown-menu { background: #fff; border: 1px solid var(--border-light); border-radius: 8px; overflow: hidden; }
+  .map-search-overlay .search-suggestions li, .map-search-overlay .dropdown-menu .dropdown-item { padding: 8px 12px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+  .map-search-overlay .search-suggestions li:last-child, .map-search-overlay .dropdown-menu .dropdown-item:last-child { border-bottom: none; }
+
+  /* Custom suggestions list to match search width (Google-style) */
+  .search-input-wrap { position: relative; }
+  .suggestions-list { position: absolute; left: 0; right: 0; width: 100%; box-sizing: border-box; bottom: calc(100% + 6px); top: auto; background: #fff; border: 1px solid var(--border-light); border-radius: 8px; box-shadow: 0 10px 24px rgba(0,0,0,0.08); z-index: 1004; list-style: none; margin: 0; padding: 6px 0; max-height: 50vh; overflow-y: auto; }
+  .suggestions-list li { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid rgba(0,0,0,0.06); display: flex; align-items: center; gap: 8px; }
+  .suggestions-list li:last-child { border-bottom: none; }
+  .suggestions-list li:hover { background: #f7f9fb; }
+  .suggestions-list li.active { background: #eef4ff; }
+  .search-input-wrap.open .search-input { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+</style>
+
+<!-- Blank map with overlay search -->
+<div class="landing-map-wrap">
+  <div id="landing-map"></div>
+  <!-- Google Maps style sidebar toggle strip (always visible) -->
+  <div class="tables-stripe" id="tablesStripe">
+    <div class="tables-stripe-icon">
+      <i class="fas fa-bars"></i>
+    </div>
+  </div>
+  <div class="tables-sidebar" id="tablesSidebar">
+    <div class="sidebar-header">
+      <h3 class="sidebar-title">CCT-Roan Project <em style="font-size: 0.7em; color: var(--accent-teal); font-weight: 400;">Beta</em></h3>
+    </div>
+    <div class="sidebar-body" id="tablesSidebarBody"></div>
+  </div>
+  <div id="tablesBackdrop" class="sidebar-backdrop" aria-hidden="true"></div>
+  <div class="map-search-overlay">
+    <a href="/upload" class="upload-fab" title="Upload" aria-label="Upload dataset">
+      <i class="fas fa-plus"></i>
+    </a>
+    <div class="search-input-wrap">
+      <i class="fas fa-search search-icon"></i>
+      <input id="datasetSearch" class="search-input" type="text" placeholder="Search datasets... (e.g., Chewore)" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions" aria-activedescendant="" />
+      <datalist id="datasetsList">
+        {% for t in tables if t.has_spatial %}
+          <option value="{{ t.name }}">{{ t.name }}</option>
+        {% endfor %}
+      </datalist>
+      <ul id="suggestions" class="suggestions-list" role="listbox" hidden></ul>
+    </div>
+    <button id="goBtn" class="btn-go" disabled>
+      <i class="fas fa-map"></i>&nbsp;View
+    </button>
+  </div>
+
+  <script>
+    (function() {
+      const input = document.getElementById('datasetSearch');
+      const goBtn = document.getElementById('goBtn');
+      const listEl = document.getElementById('suggestions');
+      if (!input || !listEl) return;
+      // Prefer reading available dataset names from the datalist in the DOM
+      let datasets = Array.from(document.querySelectorAll('#datasetsList option')).map(o => o.value).filter(Boolean);
+      // Fallback to server-rendered list if DOM datalist is empty
+      if (!datasets.length) {
+        datasets = {{ tables | selectattr('has_spatial') | map(attribute='name') | list | tojson | safe }};
+      }
+      // Recent searches (persist per-browser)
+      function getRecent() {
+        try {
+          const raw = localStorage.getItem('recentDatasets') || '[]';
+          const arr = JSON.parse(raw);
+          return Array.isArray(arr) ? arr.filter(Boolean) : [];
+        } catch (e) { return []; }
+      }
+      function saveRecent(name) {
+        if (!name) return;
+        const list = getRecent();
+        const without = list.filter(n => n !== name);
+        const next = [name, ...without].slice(0, 8);
+        try { localStorage.setItem('recentDatasets', JSON.stringify(next)); } catch (e) {}
+      }
+      let currentIndex = -1;
+
+      function filter(q) {
+        const term = q.trim().toLowerCase();
+        if (!term) {
+          // Sort all datasets alphabetically when showing initial items
+          const rec = getRecent();
+          const sortedDatasets = [...datasets].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+          const rest = sortedDatasets.filter(n => rec.indexOf(n) === -1);
+          return [...rec, ...rest].slice(0, 8);
+        }
+        const starts = datasets.filter(n => n.toLowerCase().startsWith(term)).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+        const contains = datasets.filter(n => !n.toLowerCase().startsWith(term) && n.toLowerCase().includes(term)).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+        return [...starts, ...contains].slice(0, 8);
+      }
+
+      function clear() {
+        listEl.innerHTML = '';
+        listEl.hidden = true;
+        currentIndex = -1;
+        if (listEl.parentElement) listEl.parentElement.classList.remove('open');
+        input.setAttribute('aria-expanded', 'false');
+        input.setAttribute('aria-activedescendant', '');
+      }
+
+      function render(items) {
+        if (!items.length) { clear(); return; }
+        listEl.innerHTML = '';
+        items.forEach((name, idx) => {
+          const li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.id = 'suggestion-' + idx;
+          li.innerHTML = `<i class="fas fa-layer-group" style="color:#6b7a90"></i><span>${name}</span>`;
+          li.addEventListener('mousedown', (e) => { e.preventDefault(); select(name); });
+          if (idx === currentIndex) { li.classList.add('active'); li.setAttribute('aria-selected', 'true'); input.setAttribute('aria-activedescendant', li.id); }
+          listEl.appendChild(li);
+        });
+        listEl.hidden = false;
+        if (listEl.parentElement) listEl.parentElement.classList.add('open');
+        input.setAttribute('aria-expanded', 'true');
+      }
+
+      function select(name) {
+        input.value = name;
+        clear();
+        goBtn.disabled = !name;
+        input.dispatchEvent(new Event('change'));
+        saveRecent(name);
+      }
+
+      let debTimer = null;
+      input.addEventListener('input', () => {
+        if (debTimer) clearTimeout(debTimer);
+        debTimer = setTimeout(function() {
+          const items = filter(input.value);
+          currentIndex = -1;
+          render(items);
+          goBtn.disabled = !input.value.trim();
+        }, 200);
+      });
+
+      // Show suggestions when the input gains focus (Google-style)
+      input.addEventListener('focus', () => {
+        const items = filter(input.value);
+        currentIndex = -1;
+        render(items);
+      });
+
+      input.addEventListener('keydown', (e) => {
+        let items = Array.from(listEl.querySelectorAll('li'));
+        if (e.key === 'ArrowDown' && items.length === 0) {
+          // Open on ArrowDown when closed
+          e.preventDefault();
+          const next = filter(input.value);
+          currentIndex = next.length ? 0 : -1;
+          render(next);
+          items = Array.from(listEl.querySelectorAll('li'));
+          if (items[0]) { items[0].classList.add('active'); items[0].setAttribute('aria-selected', 'true'); input.setAttribute('aria-activedescendant', items[0].id); }
+          return;
+        }
+        if (!items.length) return;
+        items.forEach(li => { li.classList.remove('active'); li.removeAttribute('aria-selected'); });
+        if (e.key === 'ArrowDown') { e.preventDefault(); currentIndex = (currentIndex + 1) % items.length; }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); currentIndex = (currentIndex - 1 + items.length) % items.length; }
+        else if (e.key === 'Home') { e.preventDefault(); currentIndex = 0; }
+        else if (e.key === 'End') { e.preventDefault(); currentIndex = items.length - 1; }
+        if (currentIndex >= 0) { const li = items[currentIndex]; li.classList.add('active'); li.setAttribute('aria-selected', 'true'); input.setAttribute('aria-activedescendant', li.id); }
+        else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (currentIndex >= 0) {
+            const name = items[currentIndex].querySelector('span').textContent;
+            select(name);
+          } else if (input.value.trim()) {
+            // No active selection, but user typed something: proceed
+            clear();
+            goBtn.disabled = false;
+            input.dispatchEvent(new Event('change'));
+            // If there's a click handler on goBtn, trigger it for convenience
+            if (typeof goBtn.click === 'function') goBtn.click();
+            saveRecent(input.value.trim());
+          } else {
+            clear();
+          }
+        }
+        else if (e.key === 'Escape') { clear(); }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!listEl.contains(e.target) && e.target !== input) clear();
+      });
+    })();
+  </script>
+  <!-- Data table panel (toggled) -->
+  <div id="dataTablePanel" class="data-table-panel" aria-hidden="true">
+    <div class="data-table-header">
+      <h6 id="dataTableTitle" class="data-table-title"><i class="fas fa-table"></i> Attributes</h6>
+      <button id="closeDataTable" class="table-toggle-btn" title="Close">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="data-table-body">
+      <div class="data-table-wrapper">
+        <table id="dataTable" class="data-table"></table>
+      </div>
+    </div>
+  </div>
+  <!-- Custom Layers Panel (top-right) -->
+  <div id="layersPanel" class="layers-panel" aria-hidden="true">
+    <div class="layers-panel-header">
+      <h6 class="layers-panel-title"><i class="fas fa-layer-group"></i> Layers</h6>
+      <button id="closeLayersPanel" class="layer-action-btn" title="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div id="layersPanelBody" class="layers-panel-body"></div>
+  </div>
 </div>
+
+<!-- Removed legacy card/hero to prevent duplicate inputs; using bottom-centered overlay only -->
 
 <!-- Search Section -->
 <div class="search-section">
@@ -448,6 +774,445 @@ document.addEventListener('DOMContentLoaded', function() {
             this.style.transform = 'translateY(-2px)';
         });
     });
+});
+</script>
+<!-- Leaflet CSS/JS and GoogleMutant for Google base layers -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCFFmXQ712pD1wbQ24Qdazhuu0X08sCWzU"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.gridlayer.googlemutant/dist/Leaflet.GoogleMutant.css" />
+<script src="https://unpkg.com/leaflet.gridlayer.googlemutant/dist/Leaflet.GoogleMutant.js"></script>
+
+<script>
+// Initialize the landing map and wire up the dataset search to load data in-place
+document.addEventListener('DOMContentLoaded', function() {
+  const input = document.getElementById('datasetSearch');
+  const goBtn = document.getElementById('goBtn');
+  const mapEl = document.getElementById('landing-map');
+  if (!input || !goBtn || !mapEl) return;
+
+  const spatialDatasets = new Set([
+    {% for t in tables if t.has_spatial %}'{{ t.name }}'{% if not loop.last %}, {% endif %}{% endfor %}
+  ]);
+  // All tables from server with spatial flag
+  const allTables = [
+    {% for t in tables %}{ name: '{{ t.name }}', has_spatial: {{ 'true' if t.has_spatial else 'false' }} }{% if not loop.last %}, {% endif %}{% endfor %}
+  ];
+
+  // Leaflet map init with zoom-out limit and horizontal wrap (no blank sides)
+  const map = L.map('landing-map', {
+    minZoom: 2,
+    worldCopyJump: true // wrap horizontally like Google Maps
+  }).setView([-19.0, 29.0], 6);
+  const googleRoadmap = L.gridLayer.googleMutant({ type: 'roadmap', minZoom: 2 });
+  const googleSatellite = L.gridLayer.googleMutant({ type: 'satellite', minZoom: 2 });
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: ' OpenStreetMap contributors', minZoom: 2 });
+  // Soft-limit vertical panning to avoid blank poles while allowing horizontal wrap
+  const clampLat = (lat) => Math.max(-85, Math.min(85, lat));
+  map.on('moveend', () => {
+    const c = map.getCenter();
+    const clampedLat = clampLat(c.lat);
+    if (clampedLat !== c.lat) {
+      map.panTo([clampedLat, c.lng], { animate: false });
+    }
+  });
+  googleRoadmap.addTo(map);
+  const baseLayers = { 'Google Roadmap': googleRoadmap, 'Google Satellite': googleSatellite, 'OpenStreetMap': osmLayer };
+  const dataLayer = L.featureGroup().addTo(map);
+  // Overlays registry and Layers control to allow multiple datasets
+  const overlays = {};
+  const layersControl = L.control.layers(baseLayers, overlays).addTo(map);
+  // Track dataset layers and their feature layer lists for row-feature linking
+  const layersByName = {};
+  const datasetFeatureLayers = {}; // { datasetName: [layerPerFeatureInOrder] }
+  // Assign distinct colors per dataset
+  const datasetStyles = {}; // { datasetName: { color, fillColor } }
+
+  // Render the tables sidebar, sorted alphabetically
+  const tablesSidebarEl = document.getElementById('tablesSidebar');
+  const tablesSidebarBodyEl = document.getElementById('tablesSidebarBody');
+  const tablesBackdropEl = document.getElementById('tablesBackdrop');
+  const tablesStripeEl = document.getElementById('tablesStripe');
+  function renderTablesSidebar() {
+    if (!tablesSidebarBodyEl) return;
+    const sorted = [...allTables].sort((a,b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    let html = '';
+    sorted.forEach(t => {
+      const disabled = !t.has_spatial;
+      html += `
+        <div class="table-item ${disabled ? 'disabled' : ''}" role="listitem" data-name="${t.name}">
+          <div class="table-name" title="${t.name}">${t.name}</div>
+        </div>`;
+    });
+    tablesSidebarBodyEl.innerHTML = html;
+    // Wire up clickable rows
+    tablesSidebarBodyEl.querySelectorAll('.table-item:not(.disabled)').forEach(item => {
+      const name = item.getAttribute('data-name');
+      item.addEventListener('click', () => {
+        loadDataset(name);
+        closeTablesSidebar();
+      });
+    });
+  }
+  function openTablesSidebar() {
+    tablesSidebarEl.classList.add('open');
+    tablesSidebarEl.setAttribute('aria-hidden', 'false');
+    if (tablesBackdropEl) tablesBackdropEl.classList.add('show');
+    renderTablesSidebar();
+  }
+  function closeTablesSidebar() {
+    tablesSidebarEl.classList.remove('open');
+    tablesSidebarEl.setAttribute('aria-hidden', 'true');
+    if (tablesBackdropEl) tablesBackdropEl.classList.remove('show');
+  }
+  if (tablesBackdropEl) tablesBackdropEl.addEventListener('click', closeTablesSidebar);
+  if (tablesStripeEl) tablesStripeEl.addEventListener('click', () => {
+    const isOpen = tablesSidebarEl.classList.contains('open');
+    if (!isOpen) { openTablesSidebar(); }
+    else { closeTablesSidebar(); }
+  });
+
+  const colorPalette = [
+    '#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00',
+    '#a65628','#f781bf','#999999','#66c2a5','#fc8d62',
+    '#8da0cb','#e78ac3','#a6d854','#ffd92f','#e5c494'
+  ];
+  function getDatasetColor(name) {
+    if (datasetStyles[name]) return datasetStyles[name];
+    const idx = Object.keys(datasetStyles).length % colorPalette.length;
+    const base = colorPalette[idx];
+    datasetStyles[name] = { color: base, fillColor: base };
+    return datasetStyles[name];
+  }
+
+  // Table toggle control (top-left)
+  const dataPanelEl = document.getElementById('dataTablePanel');
+  const dataTableEl = document.getElementById('dataTable');
+  const dataTableTitleEl = document.getElementById('dataTableTitle');
+  const dataTableCloseBtn = document.getElementById('closeDataTable');
+  // Custom layers panel elements
+  const layersPanelEl = document.getElementById('layersPanel');
+  const layersPanelBodyEl = document.getElementById('layersPanelBody');
+  const layersPanelCloseBtn = document.getElementById('closeLayersPanel');
+
+  const TableToggle = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd: function() {
+      const btn = L.DomUtil.create('button', 'leaflet-control table-toggle-btn');
+      btn.type = 'button';
+      btn.title = 'Toggle Table';
+      btn.innerHTML = '<i class="fas fa-table"></i>';
+      L.DomEvent.disableClickPropagation(btn);
+      L.DomEvent.on(btn, 'click', function() {
+        if (!dataPanelEl) return;
+        const isHidden = dataPanelEl.style.display === 'none' || dataPanelEl.style.display === '';
+        dataPanelEl.style.display = isHidden ? 'block' : 'none';
+        dataPanelEl.setAttribute('aria-hidden', String(!isHidden));
+      });
+      return btn;
+    }
+  });
+  map.addControl(new TableToggle());
+  if (dataTableCloseBtn) {
+    dataTableCloseBtn.addEventListener('click', () => {
+      dataPanelEl.style.display = 'none';
+      dataPanelEl.setAttribute('aria-hidden', 'true');
+    });
+  }
+
+  // Layers panel toggle control (top-right)
+  const LayersToggle = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd: function() {
+      const btn = L.DomUtil.create('button', 'layers-toggle-btn');
+      btn.type = 'button';
+      btn.title = 'Layers';
+      btn.innerHTML = '<i class="fas fa-layer-group"></i>';
+      L.DomEvent.disableClickPropagation(btn);
+      L.DomEvent.on(btn, 'click', function() {
+        if (!layersPanelEl) return;
+        const isHidden = layersPanelEl.style.display === 'none' || layersPanelEl.style.display === '';
+        layersPanelEl.style.display = isHidden ? 'block' : 'none';
+        layersPanelEl.setAttribute('aria-hidden', String(!isHidden));
+        if (isHidden) renderLayersPanel();
+      });
+      return btn;
+    }
+  });
+  map.addControl(new LayersToggle());
+  if (layersPanelCloseBtn) {
+    layersPanelCloseBtn.addEventListener('click', () => {
+      layersPanelEl.style.display = 'none';
+      layersPanelEl.setAttribute('aria-hidden', 'true');
+    });
+  }
+
+  function renderLayersPanel() {
+    if (!layersPanelBodyEl) return;
+    const names = Object.keys(layersByName);
+    if (!names.length) {
+      layersPanelBodyEl.innerHTML = '<div style="padding:10px;color:#888;">No layers loaded</div>';
+      return;
+    }
+    let html = '';
+    names.forEach(n => {
+      const lyr = layersByName[n];
+      const visible = map.hasLayer(lyr);
+      html += `
+        <div class="layer-item" data-layer-name="${n}">
+          <div class="layer-item-name" title="${n}"><i class="fas fa-layer-group" style="color:#6c757d;"></i> ${n}</div>
+          <div class="layer-actions">
+            <button class="layer-action-btn layer-toggle" title="${visible ? 'Hide' : 'Show'}">${visible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>'}</button>
+            <button class="layer-action-btn layer-delete" title="Remove"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>`;
+    });
+    layersPanelBodyEl.innerHTML = html;
+    // Wire up actions
+    layersPanelBodyEl.querySelectorAll('.layer-item').forEach(item => {
+      const name = item.getAttribute('data-layer-name');
+      const toggleBtn = item.querySelector('.layer-toggle');
+      const deleteBtn = item.querySelector('.layer-delete');
+      toggleBtn.addEventListener('click', () => toggleLayerVisibility(name));
+      deleteBtn.addEventListener('click', () => removeLayerByName(name));
+    });
+  }
+
+  function toggleLayerVisibility(name) {
+    const lyr = layersByName[name];
+    if (!lyr) return;
+    if (map.hasLayer(lyr)) {
+      map.removeLayer(lyr);
+    } else {
+      lyr.addTo(map);
+    }
+    if (layersControl && overlays[name]) {
+      // Keep hidden control in sync (optional)
+      // No direct API to toggle state programmatically; state derives from map membership
+    }
+    renderLayersPanel();
+  }
+
+  function removeLayerByName(name) {
+    const lyr = layersByName[name];
+    if (!lyr) return;
+    if (map.hasLayer(lyr)) map.removeLayer(lyr);
+    if (layersControl) layersControl.removeLayer(lyr);
+    delete layersByName[name];
+    delete overlays[name];
+    delete datasetFeatureLayers[name];
+    // Clear highlight if it belonged to this layer
+    if (previousHighlight && previousHighlight.layer && previousHighlight.layer._leaflet_id) {
+      // Best-effort: do nothing extra; highlight cleared when layer removed
+      previousHighlight = null;
+    }
+    renderLayersPanel();
+  }
+
+  function buildDataTable(geojson, datasetName) {
+    if (!geojson || !geojson.features || !geojson.features.length) {
+      dataTableEl.innerHTML = '<tbody><tr><td style="padding:10px;color:#888;">No attributes to display</td></tr></tbody>';
+      dataTableTitleEl.innerHTML = '<i class="fas fa-table"></i> Attributes';
+      return;
+    }
+    const features = geojson.features;
+    // Determine columns from first feature's properties
+    const cols = Object.keys(features[0].properties || {});
+    let thead = '<thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead>';
+    // Limit rows for performance
+    const maxRows = Math.min(100, features.length);
+    let rows = '';
+    for (let i = 0; i < maxRows; i++) {
+      const props = features[i].properties || {};
+      rows += `<tr data-row-index="${i}">` + cols.map(c => `<td>${props[c] !== undefined && props[c] !== null ? props[c] : ''}</td>`).join('') + '</tr>';
+    }
+    let tbody = `<tbody>${rows}</tbody>`;
+    dataTableEl.innerHTML = thead + tbody;
+    dataTableTitleEl.innerHTML = `<i class=\"fas fa-table\"></i> ${datasetName} (${features.length} features)`;
+    // Wire up row click to highlight feature on the map
+    const tbodyEl = dataTableEl.querySelector('tbody');
+    if (tbodyEl) {
+      tbodyEl.querySelectorAll('tr').forEach(tr => {
+        tr.addEventListener('click', () => {
+          const idx = Number(tr.getAttribute('data-row-index'));
+          selectTableRow(datasetName, idx);
+        });
+      });
+    }
+  }
+
+  // Helpers for feature highlight/reset
+  function defaultVectorStyleForGeomType(geomType, baseColor) {
+    if (geomType === 'Polygon' || geomType === 'MultiPolygon') return { fillColor: baseColor || '#3388ff', weight: 2, opacity: 1, color: baseColor || '#0066cc', fillOpacity: 0.3 };
+    if (geomType === 'LineString' || geomType === 'MultiLineString') return { color: baseColor || '#ff7800', weight: 3, opacity: 0.8 };
+    return {};
+  }
+  function highlightVectorStyleForGeomType(geomType) {
+    if (geomType === 'Polygon' || geomType === 'MultiPolygon') return { color: '#ffd24d', weight: 4, fillColor: '#ffe08a', fillOpacity: 0.5 };
+    if (geomType === 'LineString' || geomType === 'MultiLineString') return { color: '#ffd24d', weight: 5, opacity: 1 };
+    return {};
+  }
+
+  let previousHighlight = null; // { layer, datasetName }
+  function resetPreviousHighlight() {
+    if (!previousHighlight) return;
+    const lyr = previousHighlight.layer;
+    if (lyr && lyr.feature && lyr.setStyle) {
+      const t = lyr.feature.geometry && lyr.feature.geometry.type;
+      const baseColor = lyr._datasetColor || null;
+      lyr.setStyle(defaultVectorStyleForGeomType(t, baseColor));
+    } else if (lyr && lyr.setStyle && typeof lyr.getRadius === 'function') {
+      // circle marker default
+      const base = lyr._datasetColor || '#ff7800';
+      lyr.setStyle({ radius: 6, fillColor: base, color: '#000', weight: 1, opacity: 1, fillOpacity: 0.8 });
+    }
+    previousHighlight = null;
+  }
+
+  function selectTableRow(datasetName, index) {
+    // Visual row selection
+    const tbodyEl = dataTableEl.querySelector('tbody');
+    if (tbodyEl) {
+      tbodyEl.querySelectorAll('tr').forEach(tr => tr.classList.remove('selected'));
+      const tr = tbodyEl.querySelector(`tr[data-row-index="${index}"]`);
+      if (tr) tr.classList.add('selected');
+    }
+    // Feature highlight
+    const featureList = datasetFeatureLayers[datasetName];
+    if (!featureList) return;
+    const lyr = featureList[index];
+    if (!lyr) return;
+    resetPreviousHighlight();
+    let geomType = lyr.feature && lyr.feature.geometry && lyr.feature.geometry.type;
+    if (lyr.setStyle) {
+      if (typeof lyr.getRadius === 'function') {
+        // circle marker highlight
+        lyr.setStyle({ radius: 9, fillColor: '#ffe08a', color: '#cc9a00', weight: 2, opacity: 1, fillOpacity: 0.9 });
+      } else {
+        lyr.setStyle(highlightVectorStyleForGeomType(geomType));
+      }
+      if (lyr.bringToFront) lyr.bringToFront();
+    }
+    previousHighlight = { layer: lyr, datasetName };
+    // Pan/zoom to feature
+    if (lyr.getBounds) {
+      const b = lyr.getBounds();
+      if (b && b.isValid()) map.flyToBounds(b, { padding: [30, 30], duration: 0.8 });
+    } else if (lyr.getLatLng) {
+      map.flyTo(lyr.getLatLng(), Math.max(map.getZoom(), 12), { duration: 0.8 });
+    }
+    if (lyr.openPopup) lyr.openPopup();
+  }
+
+  // Ensure the map fills the viewport under the actual navbar height
+  const wrap = document.querySelector('.landing-map-wrap');
+  function adjustMapHeight() {
+    const nav = document.querySelector('nav.navbar');
+    const navH = nav ? nav.offsetHeight : 0;
+    if (wrap) {
+      wrap.style.height = Math.max(0, window.innerHeight - navH) + 'px';
+    }
+  }
+  adjustMapHeight();
+  window.addEventListener('resize', adjustMapHeight);
+
+  function validate() {
+    const val = (input.value || '').trim();
+    goBtn.disabled = !spatialDatasets.has(val);
+  }
+
+  function loadDataset(name) {
+    if (!name) return;
+    goBtn.disabled = true;
+    goBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>&nbsp;Loading';
+
+    fetch(`/api/geojson/${encodeURIComponent(name)}`)
+      .then(r => r.json())
+      .then(data => {
+        // Basic error handling
+        if (!data || data.error) {
+          console.error('Error loading dataset:', data && data.error);
+          goBtn.innerHTML = '<i class="fas fa-map"></i>&nbsp;View';
+          validate();
+          return;
+        }
+        // If a layer with this name already exists, replace it
+        if (layersByName[name]) {
+          layersControl.removeLayer(layersByName[name]);
+          if (map.hasLayer(layersByName[name])) map.removeLayer(layersByName[name]);
+          delete layersByName[name];
+          delete overlays[name];
+          delete datasetFeatureLayers[name];
+        }
+
+        const perFeatureLayers = [];
+        const ds = getDatasetColor(name);
+        const layer = L.geoJSON(data, {
+          pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 6, fillColor: ds.color, color: '#000', weight: 1, opacity: 1, fillOpacity: 0.8 }),
+          style: (feature) => {
+            const t = feature.geometry && feature.geometry.type;
+            return defaultVectorStyleForGeomType(t, ds.color);
+          },
+          onEachFeature: (feature, lyr) => {
+            // store dataset color on each feature layer for reset later
+            lyr._datasetColor = ds.color;
+            perFeatureLayers.push(lyr);
+            let html = '<div class="feature-popup">';
+            html += '<h6><i class="fas fa-map-marker-alt"></i> Feature Details</h6>';
+            if (feature.properties) {
+              html += '<table class="table table-sm">';
+              for (const [k,v] of Object.entries(feature.properties)) {
+                if (v !== null && v !== undefined) html += `<tr><td><strong>${k}:</strong></td><td>${v}</td></tr>`;
+              }
+              html += '</table>';
+            }
+            html += `<small class="text-muted">Geometry: ${feature.geometry && feature.geometry.type}</small>`;
+            html += '</div>';
+            lyr.bindPopup(html);
+          }
+        });
+        layer.addTo(map);
+        // Register in overlays and datasets
+        overlays[name] = layer;
+        layersByName[name] = layer;
+        datasetFeatureLayers[name] = perFeatureLayers;
+        layersControl.addOverlay(layer, name);
+
+        // Fit to data bounds
+        const bounds = layer.getBounds();
+        if (bounds && bounds.isValid()) {
+          // Animated pan/zoom to bounds
+          map.flyToBounds(bounds, { padding: [20, 20], duration: 1.0, easeLinearity: 0.25 });
+        }
+        // Build/update the attribute table
+        try { buildDataTable(data, name); } catch (e) { console.warn('Table build failed', e); }
+        // Refresh layers panel to show color swatch
+        renderLayersPanel();
+      })
+      .catch(err => {
+        console.error('Dataset fetch failed:', err);
+      })
+      .finally(() => {
+        goBtn.innerHTML = '<i class="fas fa-map"></i>&nbsp;View';
+        validate();
+      });
+  }
+
+  function go() {
+    const name = (input.value || '').trim();
+    if (!spatialDatasets.has(name)) return;
+    loadDataset(name);
+    // Clear search text after loading
+    input.value = '';
+    validate();
+  }
+
+  input.addEventListener('input', validate);
+  input.addEventListener('change', validate);
+  input.addEventListener('keyup', (e) => { if (e.key === 'Enter' && !goBtn.disabled) go(); });
+  goBtn.addEventListener('click', () => { if (!goBtn.disabled) go(); });
+
+  validate();
 });
 </script>
 {% endblock %}

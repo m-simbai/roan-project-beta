@@ -465,9 +465,11 @@ def upload_shapefile():
         
         # Save uploaded file
         file.save(filepath)
+        # Optional dataset name from form
+        desired_name = request.form.get('name', '').strip()
         
-        # Process the shapefile in background
-        result = process_shapefile_upload(filepath, upload_id)
+        # Process the shapefile
+        result = process_shapefile_upload(filepath, upload_id, desired_name)
         
         if result['success']:
             # Clean up uploaded file
@@ -490,7 +492,7 @@ def upload_shapefile():
             os.remove(filepath)
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
-def process_shapefile_upload(zip_filepath, upload_id):
+def process_shapefile_upload(zip_filepath, upload_id, desired_name=None):
     """Process uploaded shapefile ZIP and import to database"""
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -509,15 +511,36 @@ def process_shapefile_upload(zip_filepath, upload_id):
             shp_file = shp_files[0]
             shp_path = os.path.join(temp_dir, shp_file)
             
-            # Generate table name from filename
-            base_name = os.path.splitext(shp_file)[0].lower()
-            # Clean table name (remove special characters, ensure it starts with letter)
-            table_name = ''.join(c if c.isalnum() else '_' for c in base_name)
-            if not table_name[0].isalpha():
-                table_name = 'table_' + table_name
+            # Determine table name: prefer provided desired_name, else from filename
+            def sanitize_name(name: str) -> str:
+                cleaned = ''.join(c if c.isalnum() else '_' for c in name.lower())
+                if not cleaned:
+                    return ''
+                if not cleaned[0].isalpha():
+                    cleaned = 'table_' + cleaned
+                return cleaned
+
+            base_name = os.path.splitext(shp_file)[0]
+            preferred = sanitize_name(desired_name) if desired_name else ''
+            table_name = preferred or sanitize_name(base_name)
+            if not table_name:
+                table_name = 'table_' + upload_id.replace('-', '')[:8]
             
             # Check if table already exists
             with engine.connect() as conn:
+                # ensure uniqueness if preferred name exists
+                candidate = table_name
+                suffix = 1
+                while True:
+                    try:
+                        conn.execute(text(f"SELECT 1 FROM {candidate} WHERE 1=0"))
+                        # If query didn't error, table exists -> try next suffix
+                        candidate = f"{table_name}_{suffix}"
+                        suffix += 1
+                    except Exception:
+                        # Table does not exist
+                        table_name = candidate
+                        break
                 existing_tables = conn.execute(text(
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
                 )).fetchall()

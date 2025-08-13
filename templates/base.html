@@ -9,10 +9,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary-teal: #4ECDC4;
-            --dark-teal: #26A69A;
-            --light-teal: #B2DFDB;
-            --accent-teal: #00BCD4;
+            --primary-brown: #964B00;
+            --dark-brown: #786C3B;
+            --light-brown: #F5F5DC;
+            --accent-brown: #FFC080;
             --text-dark: #2E3A59;
             --text-light: #6B7280;
             --bg-light: #F8FAFC;
@@ -337,6 +337,70 @@
                 gap: 0.5rem;
             }
         }
+        /* Ensure navbar height consistent and text brown */
+        .navbar {
+            padding: 1.4rem 0; /* slightly thicker header for more vertical space */
+        }
+        .navbar .navbar-brand,
+        .navbar .nav-link,
+        .navbar i {
+            color: #6b3f28 !important; /* brown */
+        }
+        .navbar .navbar-brand em { /* ensure Beta tag also brown */
+            color: #6b3f28 !important;
+            font-style: normal;
+            opacity: 0.9;
+        }
+        .navbar .nav-link:hover,
+        .navbar .nav-link:focus {
+            color: #5a331f !important; /* darker brown on hover */
+        }
+
+        /* Layout: prevent page scroll in full-screen landing */
+        html, body { height: 100%; overflow: hidden; }
+
+        /* Footer fixed at bottom to avoid creating scroll */
+        footer {
+            position: fixed;
+            left: 0; right: 0; bottom: 0;
+            margin: 0 !important; /* override inline margin-top */
+            z-index: 1030;
+        }
+
+        /* Upload popover panel (positioned via JS above the overlay + button) */
+        .upload-popover {
+            position: fixed;
+            width: 320px;
+            background: #fff;
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+            z-index: 1101;
+            padding: 12px;
+            display: none;
+        }
+        .upload-popover .popover-header {
+            font-weight: 600;
+            color: #6b3f28;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .upload-popover .btn-row { display: flex; gap: 8px; justify-content: flex-end; }
+        /* Ensure outline buttons in popover have proper styling */
+        .upload-popover .btn-outline-primary {
+            color: var(--primary-teal);
+            border-color: var(--primary-teal);
+        }
+        .upload-popover .btn-outline-primary:hover {
+            color: #fff;
+            background-color: var(--primary-teal);
+            border-color: var(--primary-teal);
+        }
+        /* Compact progress bar height */
+        .upload-popover .progress { height: 6px; background:#f0f2f4; }
+        .upload-popover .progress-bar { background: linear-gradient(90deg, var(--primary-teal), var(--accent-teal)); }
     </style>
 </head>
 <body>
@@ -346,7 +410,6 @@
                     <i class="fas fa-database"></i> CCT-Roan Project <em style="font-size: 0.7em; color: var(--accent-teal); font-weight: 400;">Beta</em>
                 </a>
             <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="/"><i class="fas fa-home"></i> Home</a>
                 <a class="nav-link" href="/upload"><i class="fas fa-upload"></i> Upload</a>
             </div>
         </div>
@@ -356,12 +419,278 @@
         {% block content %}{% endblock %}
     </div>
 
+    <div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" style="border-radius: 12px; border: 1px solid var(--border-light);">
+                <div class="modal-header" style="border-bottom: 1px solid var(--border-light);">
+                    <h5 class="modal-title" id="uploadModalLabel" style="font-weight: 700; color: #6b3f28;">
+                        <i class="fas fa-upload"></i> Upload Dataset
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="padding: 1rem 1.25rem;">
+                    <div class="card" style="border: 1px solid var(--border-light); border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
+                        <div class="card-body" style="padding: 1rem;">
+                            <form id="uploadForm" method="POST" action="/upload" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label for="datasetName" class="form-label">Name</label>
+                                    <input type="text" class="form-control" id="datasetName" name="name" placeholder="e.g. wildlife_sightings" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="datasetFile" class="form-label">File</label>
+                                    <input type="file" class="form-control" id="datasetFile" name="file" accept=".zip,.shp,.shx,.dbf" required>
+                                    <small class="form-text text-muted"><em>Upload a .zip containing matching shapefile components (.shp, .shx, .dbf), all with the same base name.</em></small>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="datasetDesc" class="form-label">Description (optional)</label>
+                                    <textarea class="form-control" id="datasetDesc" name="description" rows="3" placeholder="Short description"></textarea>
+                                </div>
+                                <div class="d-flex justify-content-end gap-2">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="submit" class="btn btn-primary" title="Save upload"><i class="fas fa-save"></i> Save</button>
+                                </div>
+                            </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     <!-- Footer -->
     <footer style="text-align: right; padding: 1rem 2rem; margin-top: 3rem; color: var(--text-light); font-size: 0.8rem;">
         <em style="opacity: 0.6;">powered by CISO</em>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      // Only intercept on the landing page where the inline modal UX is desired
+      const isLanding = !!document.getElementById('landing-map');
+      const uploadModalEl = document.getElementById('uploadModal');
+      if (!isLanding || !uploadModalEl) return;
+
+      // Collect all potential upload openers: navbar link, any link to /upload, and custom triggers
+      const openerSelectors = [
+        'a.nav-link[href="/upload"]',
+        'a[href="/upload"]',
+        'a[href^="/upload?"]',
+        '[data-upload-open="true"]'
+      ];
+      let uploadOpeners = Array.from(document.querySelectorAll(openerSelectors.join(',')));
+      // Exclude the search overlay plus button; it uses a compact popover instead of the full modal
+      uploadOpeners = uploadOpeners.filter(el => !el.closest('.map-search-overlay'));
+      if (uploadOpeners.length === 0) return;
+
+      // If Bootstrap is available, show modal; otherwise fallback to navigate
+      const hasBootstrap = (typeof bootstrap !== 'undefined' && bootstrap.Modal);
+      let modalInstance = null;
+      if (hasBootstrap) {
+        modalInstance = new bootstrap.Modal(uploadModalEl);
+      }
+
+      uploadOpeners.forEach(function (el) {
+        el.addEventListener('click', function (e) {
+          if (hasBootstrap && modalInstance) {
+            e.preventDefault();
+            modalInstance.show();
+          }
+          // else: allow default navigation as a graceful fallback
+        });
+      });
+
+      // Upload popover anchored to the existing overlay plus button (landing page only)
+      try {
+        const anchorBtn = document.querySelector('.map-search-overlay .upload-fab');
+        if (!anchorBtn) return;
+
+        const pop = document.createElement('div');
+        pop.id = 'uploadPopover';
+        pop.className = 'upload-popover';
+        pop.innerHTML = `
+          <div class="popover-header"><i class="fas fa-upload"></i><span>Upload Dataset</span></div>
+          <form id="uploadFabForm" method="POST" action="/upload" enctype="multipart/form-data">
+            <div class="mb-2">
+              <input type="text" class="form-control form-control-sm" name="name" placeholder="Name" required>
+            </div>
+            <div class="mb-2">
+              <input type="file" class="form-control form-control-sm" name="file" accept=".zip,.shp,.shx,.dbf" required>
+              <small class="form-text text-muted"><em>Upload a .zip with matching .shp, .shx, .dbf files (same base name).</em></small>
+            </div>
+            <div class="btn-row">
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="fabCancelBtn">Cancel</button>
+              <button type="submit" class="btn btn-sm btn-outline-primary" title="Save upload"><i class="fas fa-save"></i> Save</button>
+            </div>
+            <div id="fabProgress" style="display:none; margin-top:8px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                <span style="font-size:12px; color: var(--text-light);"><i class="fas fa-spinner fa-spin"></i> Uploading...</span>
+                <span id="fabProgressText" style="font-size:12px; color: var(--text-light);">0%</span>
+              </div>
+              <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                <div id="fabProgressBar" class="progress-bar" style="width: 0%; transition: width 0.25s ease;"></div>
+              </div>
+              <div id="fabProgressMsg" style="display:none; margin-top:6px; font-size:12px; color: var(--dark-teal);">
+                <i class="fas fa-info-circle"></i> <span></span>
+              </div>
+              <div id="fabAlert" style="margin-top:8px;"></div>
+            </div>
+          </form>
+        `;
+        document.body.appendChild(pop);
+
+        let popVisible = false;
+        function positionPopover() {
+          const rect = anchorBtn.getBoundingClientRect();
+          const popRect = pop.getBoundingClientRect();
+          // Place above the button, horizontally aligned to its right edge with 24px margin
+          pop.style.position = 'fixed';
+          pop.style.left = Math.max(12, Math.min(window.innerWidth - popRect.width - 12, rect.left + rect.width - popRect.width)) + 'px';
+          pop.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
+        }
+        const togglePop = function(show) {
+          pop.style.display = show ? 'block' : 'none';
+          if (show) {
+            positionPopover();
+          }
+        };
+
+        anchorBtn.addEventListener('click', function(e) {
+          // If anchor is an <a href="/upload">, prevent navigation when using popover
+          if (hasBootstrap) { // we still have the modal available if needed elsewhere
+            e.preventDefault();
+          } else {
+            e.preventDefault();
+          }
+          e.stopPropagation();
+          popVisible = !popVisible;
+          togglePop(popVisible);
+        });
+
+        window.addEventListener('resize', function(){ if (popVisible) positionPopover(); });
+
+        document.addEventListener('click', function(e) {
+          if (!popVisible) return;
+          if (!pop.contains(e.target) && e.target !== anchorBtn && !anchorBtn.contains(e.target)) {
+            popVisible = false;
+            togglePop(false);
+          }
+        });
+
+        const cancelBtn = () => document.getElementById('fabCancelBtn');
+        document.addEventListener('click', function(e){
+          const c = cancelBtn();
+          if (c && e.target === c) {
+            popVisible = false;
+            togglePop(false);
+          }
+        });
+        // Handle compact popover form submit with progress
+        const fabForm = pop.querySelector('#uploadFabForm');
+        if (fabForm) {
+          fabForm.addEventListener('submit', function(ev){
+            ev.preventDefault();
+            const form = ev.currentTarget;
+            const saveBtn = form.querySelector('button[type="submit"]');
+            const fileInput = form.querySelector('input[type="file"][name="file"]');
+            const nameInput = form.querySelector('input[type="text"][name="name"]');
+            const progressWrap = form.querySelector('#fabProgress');
+            const bar = form.querySelector('#fabProgressBar');
+            const pct = form.querySelector('#fabProgressText');
+            const msgWrap = form.querySelector('#fabProgressMsg');
+            const msgSpan = msgWrap ? msgWrap.querySelector('span') : null;
+            const alertWrap = form.querySelector('#fabAlert');
+
+            // reset alerts
+            if (alertWrap) alertWrap.innerHTML = '';
+
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+              if (alertWrap) alertWrap.innerHTML = '<div class="alert alert-danger" style="padding:6px 8px; border:none; border-radius:6px; background: rgba(231,76,60,0.1); color:#c0392b;"><i class="fas fa-exclamation-triangle"></i> Please choose a file.</div>';
+              return;
+            }
+            if (!nameInput || !nameInput.value.trim()) {
+              if (alertWrap) alertWrap.innerHTML = '<div class="alert alert-danger" style="padding:6px 8px; border:none; border-radius:6px; background: rgba(231,76,60,0.1); color:#c0392b;"><i class="fas fa-exclamation-triangle"></i> Please provide a name.</div>';
+              return;
+            }
+
+            // Show progress UI
+            if (progressWrap) progressWrap.style.display = 'block';
+            if (bar) bar.style.width = '0%';
+            if (pct) pct.textContent = '0%';
+            if (msgWrap) { msgWrap.style.display = 'block'; msgSpan && (msgSpan.textContent = 'Uploading file...'); }
+
+            saveBtn.disabled = true;
+            const originalHTML = saveBtn.innerHTML;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+            // Simulated client-side progress up to 90%
+            let progress = 0;
+            const tick = () => {
+              progress += Math.random() * 15;
+              if (progress > 90) progress = 90;
+              if (bar) {
+                const w = progress.toFixed(0) + '%';
+                bar.style.setProperty('width', w, 'important');
+                bar.setAttribute('aria-valuenow', String(Math.round(progress)));
+              }
+              if (pct) pct.textContent = Math.round(progress) + '%';
+              if (progress < 30) {
+                msgSpan && (msgSpan.textContent = 'Uploading file...');
+              } else if (progress < 60) {
+                msgSpan && (msgSpan.textContent = 'Extracting shapefile...');
+              } else if (progress < 90) {
+                msgSpan && (msgSpan.textContent = 'Importing to database...');
+              }
+            };
+            const interval = setInterval(tick, 250);
+
+            // Build multipart form data
+            const fd = new FormData();
+            fd.append('name', nameInput.value.trim());
+            fd.append('file', fileInput.files[0]);
+
+            fetch('/upload', {
+              method: 'POST',
+              body: fd
+            }).then(r => r.json())
+              .then(data => {
+                clearInterval(interval);
+                if (bar) { bar.style.setProperty('width', '100%', 'important'); bar.setAttribute('aria-valuenow', '100'); }
+                if (pct) pct.textContent = '100%';
+                if (msgSpan) msgSpan.textContent = data && data.success ? 'Completed.' : 'Failed.';
+
+                if (data && data.success) {
+                  const tn = data.table_name ? ' (' + data.table_name + ')' : '';
+                  if (alertWrap) alertWrap.innerHTML = '<div class="alert alert-success" style="padding:6px 8px; border:none; border-radius:6px; background: rgba(26,188,156,0.1); color: var(--dark-teal);"><i class="fas fa-check-circle"></i> Upload successful' + tn + '.</div>';
+                  // Reset minimal fields after a moment and close popover
+                  setTimeout(() => {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = originalHTML;
+                    if (progressWrap) progressWrap.style.display = 'none';
+                    nameInput.value = '';
+                    fileInput.value = '';
+                    popVisible = false;
+                    togglePop(false);
+                  }, 1200);
+                } else {
+                  const err = (data && data.error) ? data.error : 'Unknown error';
+                  if (alertWrap) alertWrap.innerHTML = '<div class="alert alert-danger" style="padding:6px 8px; border:none; border-radius:6px; background: rgba(231,76,60,0.1); color:#c0392b;"><i class=\'fas fa-exclamation-triangle\'></i> ' + err + '</div>';
+                  saveBtn.disabled = false;
+                  saveBtn.innerHTML = originalHTML;
+                }
+              })
+              .catch(err => {
+                clearInterval(interval);
+                if (alertWrap) alertWrap.innerHTML = '<div class="alert alert-danger" style="padding:6px 8px; border:none; border-radius:6px; background: rgba(231,76,60,0.1); color:#c0392b;"><i class=\'fas fa-exclamation-triangle\'></i> ' + (err && err.message ? err.message : 'Upload failed') + '</div>';
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = originalHTML;
+              });
+          });
+        }
+      } catch (err) {
+        // fail silently; popover is a progressive enhancement
+      }
+    });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

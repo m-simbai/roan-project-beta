@@ -109,28 +109,32 @@
 <!-- Leaflet CSS and JS -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Google Maps JS API and Leaflet.GoogleMutant for Google base layers -->
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCFFmXQ712pD1wbQ24Qdazhuu0X08sCWzU"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.gridlayer.googlemutant/dist/Leaflet.GoogleMutant.css" />
+<script src="https://unpkg.com/leaflet.gridlayer.googlemutant/dist/Leaflet.GoogleMutant.js"></script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize map
     const map = L.map('map').setView([0, 0], 2);
     
-    // Add base layers
+    // Add base layers (Google as default)
+    const googleRoadmap = L.gridLayer.googleMutant({ type: 'roadmap' });
+    const googleSatellite = L.gridLayer.googleMutant({ type: 'satellite' });
+    // Keep OSM as an alternative base layer
     const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+        attribution: ' OpenStreetMap contributors'
     });
     
-    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: '© Esri, Maxar, Earthstar Geographics'
-    });
-    
-    // Add default layer
-    osmLayer.addTo(map);
+    // Add default layer (Google Roadmap)
+    googleRoadmap.addTo(map);
     
     // Layer control
     const baseLayers = {
-        "OpenStreetMap": osmLayer,
-        "Satellite": satelliteLayer
+        "Google Roadmap": googleRoadmap,
+        "Google Satellite": googleSatellite,
+        "OpenStreetMap": osmLayer
     };
     
     const overlayLayers = {};
@@ -386,6 +390,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
 #map {
     border-radius: 0 0 0.375rem 0.375rem;
+}
+
+/* Hide Home button/icon in the header navbar on this page */
+nav.navbar .navbar-nav a[title="Home"],
+nav.navbar .navbar-nav .fa-home {
+    display: none !important;
 }
 </style>
 {% endblock %}
