@@ -7,3 +7,4 @@ Flask==3.0.0
 Flask-SQLAlchemy==3.0.5
 fiona==1.9.5
 werkzeug==3.0.1
+psycopg2-binary==2.9.10
