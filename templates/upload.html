@@ -181,7 +181,32 @@ document.getElementById('uploadForm').addEventListener('submit', function(e) {
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(async response => {
+        const contentType = response.headers.get('content-type') || '';
+        let data = null;
+        try {
+            if (contentType.includes('application/json')) {
+                data = await response.json();
+            } else {
+                // Non-JSON response (likely HTML error page). Read as text and surface a friendly message.
+                const text = await response.text();
+                throw new Error(text || `Server returned ${response.status}`);
+            }
+        } catch (e) {
+            // JSON parsing failure
+            if (!data) {
+                throw new Error(`Unexpected server response. ${e.message || e}`);
+            }
+        }
+
+        if (!response.ok) {
+            // If server included an error field, bubble it up
+            const message = (data && (data.error || data.message)) || `Upload failed with status ${response.status}`;
+            throw new Error(message);
+        }
+
+        return data;
+    })
     .then(data => {
         clearInterval(progressInterval);
         
@@ -210,7 +235,16 @@ document.getElementById('uploadForm').addEventListener('submit', function(e) {
     })
     .catch(error => {
         clearInterval(progressInterval);
-        showAlert(`<strong>Upload failed:</strong> ${error.message}`, 'error');
+        // Try to make common backend errors friendlier
+        const msg = (error && error.message) ? error.message : 'An unknown error occurred during upload.';
+        let friendly = msg;
+        if (msg.includes('413') || msg.toLowerCase().includes('too large')) {
+            friendly = 'File too large. Maximum allowed is 100MB.';
+        } else if (msg.startsWith('<')) {
+            // Looks like HTML content was returned
+            friendly = 'Unexpected server response (HTML). Please check server logs.';
+        }
+        showAlert(`<strong>Upload failed:</strong> ${friendly}`, 'error');
         resetForm();
     });
     

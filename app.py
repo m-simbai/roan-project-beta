@@ -1,4 +1,5 @@
 from flask import Flask, render_template, jsonify, send_file, Response, request, flash, redirect, url_for
+from werkzeug.exceptions import RequestEntityTooLarge
 import os
 import tempfile
 import zipfile
@@ -13,6 +14,32 @@ import uuid
 
 # Load environment variables
 load_dotenv()
+
+def make_db_engine(isolation_level='AUTOCOMMIT'):
+    """Create a new database engine with proper settings."""
+    url = os.getenv('DATABASE_URL')
+    if not url:
+        raise ValueError("DATABASE_URL environment variable is required")
+    
+    # Normalize database URL
+    if url.startswith('postgres://'):
+        url = 'postgresql://' + url[len('postgres://'):]
+    
+    # Force psycopg2 driver
+    if url.startswith('postgresql+pg8000://'):
+        url = url.replace('postgresql+pg8000://', 'postgresql+psycopg2://', 1)
+    elif url.startswith('postgresql://') and '+psycopg2' not in url:
+        url = url.replace('postgresql://', 'postgresql+psycopg2://', 1)
+    
+    return create_engine(
+        url,
+        isolation_level=isolation_level,
+        pool_pre_ping=True,
+        pool_recycle=3600
+    )
+
+# Create the main database engine, using AUTOCOMMIT for safety on read-only pages
+engine = make_db_engine()
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
@@ -38,38 +65,22 @@ def inject_google_maps_api_key():
         'GOOGLE_MAPS_API_KEY': os.getenv('GOOGLE_MAPS_API_KEY', '')
     }
 
-# Database connection
-DATABASE_URL = os.getenv('DATABASE_URL')
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is required")
+# Ensure JSON is returned for common errors on AJAX upload
+@app.errorhandler(RequestEntityTooLarge)
+def handle_file_too_large(e):
+    # Triggered when MAX_CONTENT_LENGTH is exceeded
+    return jsonify({'error': 'File too large. Maximum allowed is 100MB.'}), 413
 
-# Normalize database URL for SQLAlchemy 2.x + psycopg3
-if DATABASE_URL.startswith('postgres://'):
-    DATABASE_URL = 'postgresql://' + DATABASE_URL[len('postgres://'):]
+@app.errorhandler(500)
+def handle_internal_error(e):
+    # If the request was the upload AJAX, respond with JSON to avoid HTML pages
+    if request.path == '/upload' or 'application/json' in (request.headers.get('Accept') or ''):
+        return jsonify({'error': 'An unexpected server error occurred during upload.'}), 500
+    # Fallback to default behavior for non-AJAX routes
+    return render_template('error.html', message=str(e)), 500
 
-# Force psycopg driver explicitly
-if DATABASE_URL.startswith('postgresql+pg8000://'):
-    DATABASE_URL = DATABASE_URL.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
-elif DATABASE_URL.startswith('postgresql+psycopg2://'):
-    DATABASE_URL = DATABASE_URL.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
-elif DATABASE_URL.startswith('postgresql://') and '+psycopg' not in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg://', 1)
-
-engine = create_engine(DATABASE_URL)
-
-def make_psycopg3_url(base_url: str) -> str:
-    """Return a SQLAlchemy URL that uses psycopg3 driver for geometry uploads."""
-    url = base_url
-    if url.startswith('postgres://'):
-        url = 'postgresql://' + url[len('postgres://'):]
-    # Force psycopg driver
-    if url.startswith('postgresql+pg8000://'):
-        url = url.replace('postgresql+pg8000://', 'postgresql+psycopg://', 1)
-    elif url.startswith('postgresql+psycopg2://'):
-        url = url.replace('postgresql+psycopg2://', 'postgresql+psycopg://', 1)
-    elif url.startswith('postgresql://') and '+psycopg' not in url:
-        url = url.replace('postgresql://', 'postgresql+psycopg://', 1)
-    return url
+# Create the main database engine (defined once; function with isolation_level parameter is at top)
+engine = make_db_engine()
 
 @app.route('/')
 def index():
@@ -464,6 +475,9 @@ def upload_shapefile():
     if not allowed_file(file.filename):
         return jsonify({'error': 'Only ZIP files are allowed'}), 400
     
+    # Create a new engine with AUTOCOMMIT for the upload process
+    upload_engine = make_db_engine(isolation_level='AUTOCOMMIT')
+    
     try:
         # Generate unique filename
         upload_id = str(uuid.uuid4())
@@ -475,7 +489,7 @@ def upload_shapefile():
         # Optional dataset name from form
         desired_name = request.form.get('name', '').strip()
         
-        # Process the shapefile
+        # Process the shapefile with the new engine
         result = process_shapefile_upload(filepath, upload_id, desired_name)
         
         if result['success']:
@@ -497,6 +511,12 @@ def upload_shapefile():
         # Clean up uploaded file on error
         if 'filepath' in locals() and os.path.exists(filepath):
             os.remove(filepath)
+        # Try to rollback any pending transactions
+        try:
+            with upload_engine.connect() as conn:
+                conn.execute(text("ROLLBACK"))
+        except:
+            pass
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
 def process_shapefile_upload(zip_filepath, upload_id, desired_name=None):
@@ -533,32 +553,22 @@ def process_shapefile_upload(zip_filepath, upload_id, desired_name=None):
             if not table_name:
                 table_name = 'table_' + upload_id.replace('-', '')[:8]
             
-            # Check if table already exists
-            with engine.connect() as conn:
-                # ensure uniqueness if preferred name exists
-                candidate = table_name
-                suffix = 1
-                while True:
-                    try:
-                        conn.execute(text(f"SELECT 1 FROM {candidate} WHERE 1=0"))
-                        # If query didn't error, table exists -> try next suffix
-                        candidate = f"{table_name}_{suffix}"
-                        suffix += 1
-                    except Exception:
-                        # Table does not exist
-                        table_name = candidate
-                        break
+            # Determine a unique table name without provoking transaction-aborting errors
+            engine_for_check = make_db_engine(isolation_level='AUTOCOMMIT')
+            with engine_for_check.connect() as conn:
+                # Use information_schema to check existence safely
                 existing_tables = conn.execute(text(
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
                 )).fetchall()
-                existing_names = [row[0] for row in existing_tables]
-                
-                # Make table name unique if necessary
-                original_name = table_name
-                counter = 1
-                while table_name in existing_names:
-                    table_name = f"{original_name}_{counter}"
-                    counter += 1
+                existing_names = {row[0] for row in existing_tables}
+
+                # If the preferred name exists, add a numeric suffix
+                candidate = table_name
+                suffix = 1
+                while candidate in existing_names:
+                    candidate = f"{table_name}_{suffix}"
+                    suffix += 1
+                table_name = candidate
             
             # Read and import shapefile
             gdf = gpd.read_file(shp_path)
@@ -581,10 +591,20 @@ def process_shapefile_upload(zip_filepath, upload_id, desired_name=None):
             except Exception as crs_err:
                 print(f"[WARN] CRS handling failed, continuing without reprojection: {crs_err}")
 
-            # Import to PostGIS using psycopg3 engine for geometry support
-            psycopg3_url = make_psycopg3_url(DATABASE_URL)
+            # Ensure PostGIS is enabled using a separate AUTOCOMMIT engine so we don't
+            # poison the main upload transaction if privileges are insufficient
             try:
-                with create_engine(psycopg3_url).connect() as upload_conn:
+                ensure_engine = make_db_engine(isolation_level='AUTOCOMMIT')
+                with ensure_engine.connect() as ensure_conn:
+                    ensure_conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+            except Exception as ext_err:
+                # Not fatal; import will still proceed and report clearer errors if PostGIS is missing
+                print(f"[WARN] Could not ensure PostGIS extension (non-fatal): {ext_err}")
+
+            # Import to PostGIS using a dedicated engine for geometry support
+            upload_engine = make_db_engine(isolation_level='READ COMMITTED')
+            try:
+                with upload_engine.connect() as upload_conn:
                     gdf.to_postgis(
                         name=table_name,
                         con=upload_conn,
@@ -597,7 +617,7 @@ def process_shapefile_upload(zip_filepath, upload_id, desired_name=None):
                     tmp_table = f"{table_name}__wkt_tmp"
                     df = gdf.drop(columns=['geometry']).copy()
                     df['__geometry_wkt'] = gdf.geometry.to_wkt()
-                    with create_engine(psycopg3_url).begin() as conn:
+                    with upload_engine.begin() as conn:
                         # Write temp table
                         df.to_sql(tmp_table, conn, if_exists='replace', index=False)
                         # Create final table with geometry from WKT
@@ -611,6 +631,15 @@ def process_shapefile_upload(zip_filepath, upload_id, desired_name=None):
                         conn.execute(text(f'DROP TABLE IF EXISTS "{tmp_table}";'))
                 else:
                     raise
+            except Exception as import_err:
+                # Provide clearer hints if PostGIS or permissions are missing
+                msg = str(import_err)
+                if 'st_geomfromtext' in msg.lower() or 'postgis' in msg.lower():
+                    return {
+                        'success': False,
+                        'error': 'PostGIS extension is not enabled on the database. Please run "CREATE EXTENSION IF NOT EXISTS postgis;" with sufficient privileges and try again.'
+                    }
+                return {'success': False, 'error': f'Import error: {msg}'}
             
             return {
                 'success': True,
