@@ -1,0 +1,2988 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roan Project Spatial Database UI</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Inline SVG favicon to avoid /favicon.ico 404s -->
+    <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="%2300c6ff"/><stop offset="1" stop-color="%23007aff"/></linearGradient></defs><circle cx="32" cy="32" r="28" fill="url(%23g)"/><path d="M32 14c-7.18 0-13 5.82-13 13 0 10.5 13 23 13 23s13-12.5 13-23c0-7.18-5.82-13-13-13zm0 18a5 5 0 110-10 5 5 0 010 10z" fill="white"/></svg>' />
+    <style>
+        :root {
+            --glass-bg: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --glass-hover: rgba(255, 255, 255, 0.15);
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.8);
+            --shadow-light: rgba(0, 0, 0, 0.1);
+            --shadow-medium: rgba(0, 0, 0, 0.2);
+            --accent-color: #4f9eff;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --error-color: #ef4444;
+        }
+
+        
+
+        [data-theme="light"] {
+            --glass-bg: rgba(255, 255, 255, 0.25);
+            --glass-border: rgba(255, 255, 255, 0.4);
+            --glass-hover: rgba(255, 255, 255, 0.35);
+            --text-primary: #1f2937;
+            --text-secondary: rgba(31, 41, 55, 0.8);
+            --shadow-light: rgba(0, 0, 0, 0.05);
+            --shadow-medium: rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: all 0.3s ease;
+        }
+
+        [data-theme="light"] body {
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        }
+
+        .glass {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px var(--shadow-medium);
+        }
+
+        .glass-button {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            color: var(--text-primary);
+            box-shadow: 0 4px 16px var(--shadow-light);
+        }
+
+        .glass-button:hover {
+            background: var(--glass-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px var(--shadow-medium);
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 350px;
+            max-height: calc(100vh - 40px);
+            z-index: 1000;
+            transform: translateX(-370px);
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--glass-border) transparent;
+        }
+
+        .sidebar.open {
+            transform: translateX(0);
+        }
+
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: var(--glass-border);
+            border-radius: 3px;
+        }
+
+        .sidebar-toggle {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 48px;
+            height: 48px;
+            z-index: 1001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.3s ease;
+        }
+
+        /* Shift toggles when corresponding sidebar opens */
+        #sidebar.open ~ #sidebarToggle { left: 390px; }
+        #sidebar.open ~ #attrSidebarToggle { left: 390px; }
+        #attrSidebar.open ~ #attrSidebarToggle { left: 390px; }
+
+        /* Attribute sidebar aligns with its toggle button vertically */
+        #attrSidebar {
+            top: 80px;   /* same as attribute toggle top */
+            bottom: 60px; /* align with red line, above 'made with KUSE' badge */
+        }
+        #attrSidebar .sidebar-content {
+            height: 100%;
+            overflow: auto; /* scroll internal content if needed */
+            padding-bottom: 30px; /* reduce bottom padding to let content extend lower */
+        }
+
+        /* Attribute table should take full width of sidebar and scroll both ways */
+        #attrSidebar .attribute-table {
+            width: 100%;
+        }
+        #attrSidebar .attribute-table .table-container {
+            overflow: auto; /* both horizontal and vertical */
+            scrollbar-width: thin; /* Firefox */
+            scrollbar-color: rgba(255,255,255,0.35) rgba(255,255,255,0.08); /* Firefox */
+            max-height: calc(100% - 100px); /* adjust for headings with reduced bottom padding */
+        }
+        /* Ensure table can grow wider to trigger horizontal scrolling when needed */
+        #attrSidebar .attribute-table table {
+            min-width: 720px; /* adjust as needed */
+        }
+
+        /* WebKit scrollbar styling to match glassmorphism */
+        #attrSidebar .attribute-table .table-container::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        #attrSidebar .attribute-table .table-container::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            backdrop-filter: blur(6px);
+        }
+        #attrSidebar .attribute-table .table-container::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.15));
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.25);
+        }
+
+        /* Attribute Sidebar Toggle (under main sidebar button) */
+        .attribute-sidebar-toggle {
+            position: fixed;
+            top: 80px; /* 48px button + ~12px gap under main toggle */
+            left: 20px;
+            width: 48px;
+            height: 48px;
+            z-index: 1001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .sidebar-content {
+            padding: 24px;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .sidebar-header {
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .sidebar-header h2 {
+            color: var(--text-primary);
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .sidebar-header p {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .db-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background: var(--glass-bg);
+            border-radius: 12px;
+            margin-bottom: 24px;
+            border: 1px solid var(--glass-border);
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--success-color);
+            box-shadow: 0 0 8px var(--success-color);
+        }
+
+        .db-info h3 {
+            color: var(--text-primary);
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .db-info p {
+            color: var(--text-secondary);
+            font-size: 12px;
+        }
+
+        .stats-section, .features-section {
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            color: var(--text-primary);
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Scrollable table list */
+        .table-list {
+            max-height: 260px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .table-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .table-row:hover { background: rgba(255,255,255,0.08); }
+        .table-row .t-title { color: var(--text-primary); font-weight: 600; }
+        .table-row .t-sub { color: var(--text-secondary); font-size: 12px; }
+        .table-row .t-badge { color: var(--text-secondary); font-size: 12px; padding: 4px 8px; border: 1px solid var(--glass-border); border-radius: 999px; }
+
+        .stat-item, .feature-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--glass-bg);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border: 1px solid var(--glass-border);
+        }
+
+        .stat-label, .feature-label {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .stat-value {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .feature-toggle {
+            width: 40px;
+            height: 20px;
+            background: var(--glass-bg);
+            border-radius: 10px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid var(--glass-border);
+        }
+
+        .feature-toggle.active {
+            background: var(--accent-color);
+        }
+
+        .feature-toggle::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: white;
+            top: 1px;
+            left: 1px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .feature-toggle.active::after {
+            transform: translateX(10px);
+        }
+
+        /* Search Bar */
+        .search-container {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .search-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            min-width: 400px;
+        }
+
+        /* When dropdown attaches, remove the touching radius so they look connected */
+        .search-bar.connected-below { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; }
+        .search-bar.connected-above { border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; }
+
+        .search-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 16px;
+            outline: none;
+        }
+
+        .search-input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .upload-button {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            color: var(--text-primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        /* Glass round remove button (shared with #removeBtn) */
+        .remove-button, .remove-layer {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: rgba(255,255,255,0.95);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            opacity: 0.8;
+            padding: 0;
+            font-size: 16px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .remove-button:hover, .remove-layer:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #ffffff;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+
+/* Keep upload hover distinct */
+.upload-button:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+.upload-button i, .remove-button i, .remove-layer i {
+    font-size: 18px;
+    color: rgba(255,255,255,0.95);
+}
+
+.action-button {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.08);
+}
+
+.action-button:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 10px rgba(0,0,0,0.12);
+}
+
+.view-button {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255,255,255,0.95);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    padding: 8px 16px;
+    border-radius: 24px;
+    cursor: pointer;
+    font-weight: 600;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+}
+
+.view-button:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .view-button {
+    color: #000000;
+}
+
+/* Upload button icon follows theme: default white; light mode black */
+[data-theme="light"] .upload-button i {
+    color: #000000;
+}
+
+/* Map Controls (fixed to bottom-right) */
+.map-controls {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 1000;
+}
+
+.zoom-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.zoom-button {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.attribute-table-btn {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+}
+
+/* Top Controls */
+.top-controls {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    gap: 12px;
+    z-index: 1000;
+}
+
+.layers-btn, .basemap-btn, .theme-toggle {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+}
+
+/* Layers Panel */
+.layers-panel {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    width: 280px;
+    max-height: 400px;
+    z-index: 1000;
+    padding: 20px;
+    transform: translateY(-20px);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    overflow-y: auto;
+}
+
+.layers-panel.open {
+    transform: translateY(0);
+    opacity: 1;
+    visibility: visible;
+}
+
+.layers-panel h3 {
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+/* Layers header actions row */
+.layers-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.layers-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.layer-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.layer-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.layer-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.layer-name {
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.layer-type {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+
+        .zoom-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .zoom-button {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .attribute-table-btn {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        /* Top Controls */
+        .top-controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 12px;
+            z-index: 1000;
+        }
+
+        .layers-btn, .basemap-btn, .theme-toggle {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        /* Layers Panel */
+        .layers-panel {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            width: 280px;
+            max-height: 400px;
+            z-index: 1000;
+            padding: 20px;
+            transform: translateY(-20px);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            overflow-y: auto;
+        }
+
+        .layers-panel.open {
+            transform: translateY(0);
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .layers-panel h3 {
+            color: var(--text-primary);
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        /* Layers header actions row */
+        .layers-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+        .layers-actions {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .layer-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .layer-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .layer-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .layer-name {
+            color: var(--text-primary);
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .layer-type {
+            color: var(--text-secondary);
+            font-size: 12px;
+        }
+
+        /* Basemap Switcher */
+
+        /* Upload Panel */
+        .upload-panel {
+            position: fixed;
+            width: 320px;
+            max-width: calc(100vw - 24px);
+            z-index: 1000;
+            padding: 16px;
+            transform: translateY(-10px);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s ease;
+        }
+        .upload-panel.open { transform: translateY(0); opacity: 1; visibility: visible; }
+        .upload-panel h3 {
+            color: var(--text-primary);
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0 0 12px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .upload-panel .form-group { margin-bottom: 10px; }
+        .upload-panel label { color: var(--text-secondary); font-size: 12px; display: block; margin-bottom: 6px; }
+        .upload-panel input[type="text"],
+        .upload-panel input[type="file"] {
+            width: 100%;
+            background: var(--glass-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 12px;
+        }
+        /* Keep white styling when focusing dataset name field */
+        .upload-panel input[type="text"]:focus {
+            outline: none !important;
+            -webkit-appearance: none;
+            appearance: none;
+            border-color: rgba(255, 255, 255, 0.7) !important;
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 4px 12px rgba(0,0,0,0.12) !important;
+            background: rgba(255, 255, 255, 0.12);
+            color: rgba(255,255,255,0.98) !important;
+            caret-color: #fff;
+        }
+        /* Light theme: input text and caret must be black (normal and focus) */
+        [data-theme="light"] .upload-panel input[type="text"] {
+            color: #000 !important;
+            caret-color: #000;
+            background: rgba(255,255,255,0.9);
+            border-color: rgba(0,0,0,0.15);
+        }
+        [data-theme="light"] .upload-panel input[type="text"]:focus {
+            color: #000 !important;
+            caret-color: #000;
+            border-color: rgba(0,0,0,0.35) !important;
+            box-shadow: 0 0 0 2px rgba(0,0,0,0.15), 0 4px 12px rgba(0,0,0,0.12) !important;
+            background: rgba(255,255,255,0.95);
+        }
+        /* Placeholders: white in dark, dark gray in light */
+        .upload-panel input[type="text"]::placeholder { color: rgba(255,255,255,0.75); }
+        [data-theme="light"] .upload-panel input[type="text"]::placeholder { color: rgba(0,0,0,0.45); }
+        /* Make the file chooser button match the View button */
+        .upload-panel input[type="file"]::file-selector-button,
+        .upload-panel input[type="file"]::-webkit-file-upload-button {
+            margin-right: 10px;
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255,255,255,0.95);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 24px;
+            padding: 8px 14px;
+            cursor: pointer;
+            font-weight: 600;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: all 0.2s ease;
+        }
+        .upload-panel input[type="file"]:hover::file-selector-button,
+        .upload-panel input[type="file"]:hover::-webkit-file-upload-button {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+        /* Light mode: make button text black */
+        [data-theme="light"] .upload-panel input[type="file"]::file-selector-button,
+        [data-theme="light"] .upload-panel input[type="file"]::-webkit-file-upload-button {
+            color: #000000;
+        }
+        .upload-panel .hint {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+        }
+        /* Simple progress bar skin (colors inherit from theme) */
+        .upload-panel .progress { box-shadow: inset 0 2px 6px rgba(0,0,0,0.15); }
+        .upload-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+
+        /* Layers panel themed scrollbar */
+        .layers-panel {
+            scrollbar-width: thin;
+            scrollbar-color: var(--glass-border) transparent;
+        }
+
+        /* Search suggestions (Glass UI) */
+        .search-suggest {
+            position: fixed;
+            z-index: 4000;
+            width: 360px; /* adjusted dynamically */
+            max-height: 50vh;
+            overflow: auto;
+            background: rgba(30, 30, 30, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 16px;
+            backdrop-filter: blur(12px) saturate(120%);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.25);
+            color: var(--text-primary);
+            padding: 6px 0;
+            display: none;
+            /* Firefox scrollbar */
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.35) rgba(255,255,255,0.06);
+        }
+        .search-suggest.open { display: block; }
+        /* Seamless attach to the search bar */
+        .search-suggest.attached-below { border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; }
+        .search-suggest.attached-above { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; }
+        /* WebKit scrollbar (Chrome/Edge) */
+        .search-suggest::-webkit-scrollbar { width: 10px; }
+        .search-suggest::-webkit-scrollbar-track { background: rgba(255,255,255,0.06); border-radius: 8px; }
+        .search-suggest::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.35);
+            border-radius: 8px;
+            border: 2px solid rgba(0,0,0,0); /* create inset look */
+            background-clip: padding-box;
+        }
+        .search-suggest::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.5); }
+
+        /* Light theme: match the rest of the page with light glass */
+        [data-theme="light"] .search-suggest {
+            background: rgba(255, 255, 255, 0.85);
+            border-color: rgba(0, 0, 0, 0.12);
+            color: #000;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.10);
+        }
+        [data-theme="light"] .search-suggest .sugg-item { color: #000; }
+        [data-theme="light"] .search-suggest .sugg-item:hover,
+        [data-theme="light"] .search-suggest .sugg-item.active { background: rgba(0,0,0,0.06); }
+        [data-theme="light"] .search-suggest .sugg-icon { color: rgba(0,0,0,0.65); }
+        .search-suggest .sugg-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            cursor: pointer;
+            color: var(--text-primary);
+        }
+        .search-suggest .sugg-item:hover,
+        .search-suggest .sugg-item.active {
+            background: rgba(255,255,255,0.08);
+        }
+        [data-theme="light"] .search-suggest .sugg-item:hover,
+        [data-theme="light"] .search-suggest .sugg-item.active {
+            background: rgba(0,0,0,0.06);
+        }
+        .search-suggest .sugg-icon { color: var(--text-secondary); }
+        .search-suggest .empty { padding: 10px 14px; color: var(--text-secondary); font-size: 12px; }
+        .layers-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        .layers-panel::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            backdrop-filter: blur(6px);
+        }
+        .layers-panel::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.15));
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.25);
+        }
+
+        /* Layers panel compact control sizing (50% scale) */
+        .layers-panel .action-button {
+            padding: 4px 8px;
+            border-radius: 8px;
+            font-size: 10px;
+            gap: 4px;
+        }
+        .layers-panel .action-button i {
+            font-size: 12px;
+        }
+
+        .layers-panel .remove-layer {
+            width: 24px;
+            height: 24px;
+        }
+        .layers-panel .remove-layer i {
+            font-size: 12px;
+        }
+
+        .layers-panel .feature-toggle {
+            width: 20px;
+            height: 10px;
+            border-radius: 5px;
+        }
+        .layers-panel .feature-toggle::after {
+            width: 8px;
+            height: 8px;
+            top: 1px;
+            left: 1px;
+        }
+        .layers-panel .feature-toggle.active::after {
+            transform: translateX(10px);
+        }
+
+        /* Search Palette (popup) */
+        .search-palette-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.28);
+            backdrop-filter: blur(3px);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            z-index: 1200;
+        }
+        .search-palette-backdrop.open { opacity: 1; visibility: visible; }
+
+        .search-palette {
+            position: fixed;
+            left: 50%;
+            top: 18%;
+            transform: translateX(-50%) translateY(-10px);
+            width: min(760px, calc(100vw - 32px));
+            max-height: 68vh;
+            overflow: hidden;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.22s ease;
+            z-index: 1201;
+        }
+        .search-palette.open { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+        .search-palette .search-input-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 14px 10px 14px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+        .search-palette .search-input-row i { color: var(--text-secondary); }
+        .search-palette .search-input-row input {
+            flex: 1;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            color: var(--text-primary);
+        }
+        .search-palette .results { max-height: 56vh; overflow: auto; }
+        .search-result {
+            display: grid;
+            grid-template-columns: 28px 1fr auto;
+            gap: 10px;
+            align-items: center;
+            padding: 12px 14px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+        .search-result:first-child { border-top: none; }
+        .search-result:hover { background: rgba(255,255,255,0.08); }
+        .result-title { color: var(--text-primary); font-weight: 600; }
+        .result-sub { color: var(--text-secondary); font-size: 12px; }
+        .result-badge { color: var(--text-secondary); font-size: 12px; padding: 4px 8px; border: 1px solid var(--glass-border); border-radius: 999px; }
+        .result-icon { display:flex; align-items:center; justify-content:center; color: rgba(255,255,255,0.95); }
+        [data-theme="light"] .result-icon { color: #000; }
+
+        /* Theme overrides: default icons are white; in light mode use black for contrast */
+        [data-theme="light"] .remove-layer i {
+            color: #000000;
+        }
+        [data-theme="light"] .feature-toggle::after {
+            background: #000000;
+        }
+        .basemap-panel {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            width: 200px;
+            z-index: 1000;
+            padding: 16px;
+            transform: translateY(-20px);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .basemap-panel.open {
+            transform: translateY(0);
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .basemap-option {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: var(--glass-bg);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid var(--glass-border);
+        }
+
+        .basemap-option:hover {
+            background: var(--glass-hover);
+        }
+
+        .basemap-option.active {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        /* Attribute Table */
+        .attribute-table {
+            position: fixed;
+            bottom: 100px;
+            right: 30px;
+            width: 480px;
+            max-width: calc(100% - 60px);
+            height: 280px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px var(--shadow-medium);
+            padding: 16px;
+            z-index: 1002; /* ensure above map, panels, and backdrops */
+            --pop-offset: 16px; /* default from right */
+            transform-origin: center right; /* animate from button side */
+            transform: translateX(var(--pop-offset)) scale(0.96);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+
+        .attribute-table.open {
+            transform: translateX(0) scale(1);
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* When anchored from the left-side button, reverse initial offset and origin */
+        .attribute-table.from-left {
+            --pop-offset: -16px;
+            transform-origin: center left;
+        }
+
+        .attribute-table h3 {
+            color: var(--text-primary);
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .table-container {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+        }
+
+        .attribute-table table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .attribute-table th {
+            background: var(--glass-bg);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .attribute-table td {
+            color: var(--text-secondary);
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .attribute-table tr:hover {
+            background: var(--glass-hover);
+        }
+
+        .close-btn {
+            cursor: pointer;
+            opacity: 0.7;
+            transition: opacity 0.3s ease;
+        }
+
+        .close-btn:hover {
+            opacity: 1;
+        }
+
+        /* Branding */
+        .kuse-branding {
+            position: fixed;
+            bottom: 10px;
+            left: 20px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+
+        .kuse-branding:hover {
+            background: var(--glass-hover);
+            color: var(--text-primary);
+        }
+
+        .kuse-branding svg {
+            height: 1em;
+            width: auto;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 300px;
+                transform: translateX(-320px);
+            }
+
+            .sidebar.open + .sidebar-toggle {
+                left: 320px;
+            }
+
+            .search-bar {
+                min-width: 280px;
+            }
+
+            .layers-panel, .basemap-panel {
+                width: 240px;
+                right: 10px;
+            }
+
+            .attribute-table {
+                width: 320px;
+                right: 10px;
+            }
+
+            .map-controls, .search-container {
+                right: 20px;
+                bottom: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Sidebar -->
+    <div class="sidebar glass" id="sidebar">
+        <div class="sidebar-content">
+            <div class="sidebar-header">
+                <h2>Spatial Database</h2>
+                <p>PostgreSQL + PostGIS Integration</p>
+            </div>
+
+    <!-- Search Palette Overlay -->
+    <div class="search-palette-backdrop" id="searchBackdrop"></div>
+    <div class="search-palette glass" id="searchPalette">
+        <div class="search-input-row">
+            <i class="fas fa-search"></i>
+            <input id="quickSearchInput" type="text" placeholder="Search datasets, tables, or features... (Ctrl+K)" />
+        </div>
+        <div class="results" id="searchResults"></div>
+    </div>
+
+            <div class="db-status" id="dbStatus">
+                <div class="status-indicator" id="statusIndicator" style="background: var(--warning-color); box-shadow: 0 0 8px var(--warning-color);"></div>
+                <div class="db-info">
+                    <h3 id="statusTitle">Connecting...</h3>
+                    <p id="statusSub">Checking database status...</p>
+                </div>
+            </div>
+
+            <div class="stats-section">
+                <h3 class="section-title">
+                    <i class="fas fa-chart-bar"></i>
+                    Table Statistics
+                </h3>
+                <div class="stat-item"><span class="stat-label">Loading…</span></div>
+            </div>
+
+            <div class="features-section">
+                <h3 class="section-title">
+                    <i class="fas fa-table"></i>
+                    Tables
+                </h3>
+                <div id="tableList" class="table-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Attribute Sidebar (dynamic version below) -->
+
+    <!-- Sidebar Toggle -->
+    <button class="sidebar-toggle glass-button" id="sidebarToggle">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Attribute Sidebar Toggle (under sidebar toggle) -->
+    <button class="attribute-sidebar-toggle glass-button" id="attrSidebarToggle" title="Attribute Table">
+        <i class="fas fa-table"></i>
+    </button>
+
+    <!-- Top Controls -->
+    <div class="top-controls">
+        <button class="theme-toggle glass-button" id="themeToggle" title="Toggle Theme">
+            <i class="fas fa-sun"></i>
+        </button>
+        <button class="layers-btn glass-button" id="layersBtn" title="Layers">
+            <i class="fas fa-layer-group"></i>
+        </button>
+        <button class="basemap-btn glass-button" id="basemapBtn" title="Basemap">
+            <i class="fas fa-map"></i>
+        </button>
+    </div>
+
+    <!-- Layers Panel -->
+    <div class="layers-panel glass" id="layersPanel">
+        <div class="layers-header">
+            <h3>Map Layers</h3>
+            <div class="layers-actions">
+                <button class="action-button" id="toggleAllLayers">
+                    <i class="fas fa-layer-group"></i>
+                    Toggle All
+                </button>
+                <button class="action-button" id="clearAllLayers">
+                    <i class="fas fa-trash"></i>
+                    Clear All
+                </button>
+            </div>
+        </div>
+        <!-- Dynamic layer entries will appear here when data is loaded -->
+    </div>
+
+    <!-- Upload Panel -->
+    <div class="upload-panel glass" id="uploadPanel">
+        <h3><i class="fas fa-upload"></i> Upload Dataset</h3>
+        <div class="form-group">
+            <label for="uploadName">Name</label>
+            <input type="text" id="uploadName" placeholder="Dataset name (optional)">
+        </div>
+        <div class="form-group">
+            <label for="uploadFile">File</label>
+            <input type="file" id="uploadFile" accept=".zip,.geojson,.shp,.dbf,.shx">
+            <div class="hint">Upload a .zip with matching .shp, .shx, .dbf files (same base name) or a .geojson.</div>
+        </div>
+        <div id="uploadProgressWrap" style="display:none; margin-top: 10px;">
+            <div class="hint" id="uploadStatus" style="margin-bottom:6px;">Preparing upload…</div>
+            <div class="progress" style="width:100%; height:8px; background: rgba(255,255,255,0.12); border:1px solid var(--glass-border); border-radius: 999px; overflow:hidden;">
+                <div id="uploadBar" style="width:0%; height:100%; background: var(--accent-color); box-shadow: 0 0 10px var(--accent-color);"></div>
+            </div>
+            <div style="margin-top:6px; font-size:12px; color: var(--text-secondary);"><span id="uploadPct">0%</span></div>
+        </div>
+        <div class="upload-actions">
+            <button class="action-button" id="cancelUpload"><i class="fas fa-times"></i> Cancel</button>
+            <button class="action-button" id="saveUpload"><i class="fas fa-save"></i> Save</button>
+        </div>
+    </div>
+
+    <!-- Basemap Panel -->
+    <div class="basemap-panel glass" id="basemapPanel">
+        <div class="basemap-option active" data-basemap="osm">
+            <i class="fas fa-map"></i>
+            <span>OpenStreetMap</span>
+        </div>
+        <div class="basemap-option" data-basemap="satellite">
+            <i class="fas fa-satellite"></i>
+            <span>Satellite</span>
+        </div>
+        <div class="basemap-option" data-basemap="roadmap">
+            <i class="fas fa-road"></i>
+            <span>Roadmap</span>
+        </div>
+    </div>
+
+    <!-- Search Container -->
+    <div class="search-container">
+        <div class="search-bar glass">
+            <i class="fas fa-search" style="color: var(--text-secondary);"></i>
+            <input type="text" class="search-input" placeholder="Search datasets, tables, or features..." id="searchInput">
+            <button class="view-button" id="viewButton">View</button>
+        </div>
+        <!-- Upload Button -->
+        <button class="upload-button glass" id="uploadBtn" title="Upload data">
+            <i class="fas fa-upload"></i>
+        </button>
+    </div>
+
+    <!-- Map Controls -->
+    <div class="map-controls">
+        <div class="zoom-controls">
+            <button class="zoom-button glass-button" id="zoomIn" title="Zoom In">
+                <i class="fas fa-plus"></i>
+            </button>
+            <button class="zoom-button glass-button" id="zoomOut" title="Zoom Out">
+                <i class="fas fa-minus"></i>
+            </button>
+        </div>
+        <button class="attribute-table-btn glass-button" id="attributeTableBtn" title="Attribute Table">
+            <i class="fas fa-table"></i>
+        </button>
+    </div>
+
+    <!-- Attribute Table -->
+    <div class="attribute-table glass" id="attributeTable">
+        <h3>
+            Attribute Data
+            <span class="close-btn" id="closeAttributeTable">
+                <i class="fas fa-times"></i>
+            </span>
+        </h3>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Metric</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="5" style="color: var(--text-secondary); text-align:center;">No dataset selected</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Branding -->
+    <a href="https://kuse.ai" target="_blank" class="kuse-branding">
+        made with
+        <svg viewBox="0,0,160,44" xmlns="http://www.w3.org/2000/svg"><path d="m.01,20.65C-.43,8.25,9.3-2.03,22.04.34,34.78,2.72,43.29,8.32,43.29,22.9s-8.66,19.01-22.03,20.3C7.9,44.5.46,33.05.01,20.65z" fill="currentColor"/><path fill-rule="evenodd" clip-rule="evenodd" d="m146.76,7.94c8.07,0,13.24,6.15,13.24,14.58v1.39h-20.75c.45,4.05,3.51,7.37,8.57,7.37,2.62,0,5.73-1.05,7.62-2.94l2.67,3.83c-2.67,2.55-6.62,3.88-10.9,3.88-8.07,0-14.08-5.6-14.08-14.08,0-7.76,5.67-14.02,13.63-14.02zm0,4.77c-5.01,0-7.29,3.83-7.57,7.1h15.13c-.11-3.16-2.28-7.1-7.57-7.1z" fill="currentColor"/><path d="m86.64,24.49c0,4.15,2.39,6.84,6.84,6.84,4.4,0,6.84-2.69,6.84-6.84V8.55h5.37v16.33c0,6.7-4.06,11.14-12.21,11.14-8.21,0-12.21-4.5-12.21-11.09V8.55h5.37v15.94zm32.99-16.55c4.49,0,8.06,1.47,10.6,3.86l-2.59,3.81c-2.05-2-5.28-3.08-8.06-3.08-2.88,0-4.84,1.37-4.84,3.32,0,1.91,2.64,2.54,5.81,3.27,4.59,1.08,10.26,2.4,10.26,8.46,0,4.94-3.76,8.41-11.14,8.41-4.98,0-8.94-1.76-11.24-4.11l2.54-4.11c1.86,1.91,5.18,3.67,8.84,3.67,3.91,0,5.57-1.66,5.57-3.62,0-2.3-2.88-2.98-6.21-3.76-4.54-1.08-9.87-2.3-9.87-8.06,0-4.5,4.2-8.06,10.31-8.06zM60.79,20.82,71.44,8.55h6.5L66.46,21.26,78.82,35.44h-6.5l-9.28-11.1-2.25,2.49v8.6h-5.33V8.55h5.33v12.27z" fill="currentColor"/></svg>
+    </a>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize map with proper coordinates for demonstration (Harare CBD)
+        const map = L.map(`map`, { zoomControl: false }).setView([-17.8290, 31.0530], 14);
+
+        // Base layers
+        const osmLayer = L.tileLayer(`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`, {
+            attribution: `© OpenStreetMap contributors`
+        });
+        // Dark basemap (CartoDB Dark Matter)
+        const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        });
+
+
+        const satelliteLayer = L.tileLayer(`https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}`, {
+            attribution: `© Google`
+        });
+
+        const roadmapLayer = L.tileLayer(`https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}`, {
+            attribution: `© Google`
+        });
+
+        // Add default layer (OSM light theme)
+        osmLayer.addTo(map);
+
+        // DOM elements
+        const sidebar = document.getElementById(`sidebar`);
+        const sidebarToggle = document.getElementById(`sidebarToggle`);
+        const themeToggle = document.getElementById(`themeToggle`);
+        const layersBtn = document.getElementById(`layersBtn`);
+        const basemapBtn = document.getElementById(`basemapBtn`);
+        const layersPanel = document.getElementById(`layersPanel`);
+        const basemapPanel = document.getElementById(`basemapPanel`);
+        const attributeTable = document.getElementById(`attributeTable`);
+        const attributeTableBtn = document.getElementById(`attributeTableBtn`);
+        const closeAttributeTable = document.getElementById(`closeAttributeTable`);
+        const uploadPanel = document.getElementById(`uploadPanel`);
+        const cancelUpload = document.getElementById(`cancelUpload`);
+        const saveUpload = document.getElementById(`saveUpload`);
+        const uploadFileInput = document.getElementById('uploadFile');
+        const uploadNameInput = document.getElementById('uploadName');
+        const uploadProgressWrap = document.getElementById('uploadProgressWrap');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const uploadBar = document.getElementById('uploadBar');
+        const uploadPct = document.getElementById('uploadPct');
+        let currentUploadXhr = null;
+        const searchInput = document.getElementById(`searchInput`);
+        const zoomIn = document.getElementById(`zoomIn`);
+        const zoomOut = document.getElementById(`zoomOut`);
+        const attrSidebar = document.getElementById(`attrSidebar`);
+        const attrSidebarToggle = document.getElementById(`attrSidebarToggle`);
+        const searchPalette = document.getElementById('searchPalette');
+        const searchBackdrop = document.getElementById('searchBackdrop');
+        const quickSearchInput = document.getElementById('quickSearchInput');
+        const searchResults = document.getElementById('searchResults');
+        const viewButton = document.getElementById('viewButton');
+
+        // ===== Search Suggestions =====
+        let suggestEl = null;
+        let suggestItems = [];
+        let suggestIndex = -1;
+        let tablesCache = null;
+        let tablesCacheAt = 0;
+
+        function ensureSuggestEl() {
+            if (suggestEl) return suggestEl;
+            suggestEl = document.createElement('div');
+            // Use only the specific class to avoid inheriting broader glass container styles
+            suggestEl.className = 'search-suggest';
+            document.body.appendChild(suggestEl);
+            return suggestEl;
+        }
+
+        function positionSuggest() {
+            if (!suggestEl || !suggestEl.classList.contains('open')) return;
+            const anchor = searchInput?.closest('.search-bar') || searchInput; // anchor to the whole bar
+            if (!anchor) return;
+            const r = anchor.getBoundingClientRect();
+            const width = r.width; // match bar width exactly
+            suggestEl.style.width = width + 'px';
+            // Measure suggestion height safely
+            const prevDisp = suggestEl.style.display;
+            const prevVis = suggestEl.style.visibility;
+            suggestEl.style.display = 'block';
+            suggestEl.style.visibility = 'hidden';
+            const suggH = suggestEl.offsetHeight || 200;
+            suggestEl.style.display = prevDisp || 'block';
+            suggestEl.style.visibility = prevVis || 'visible';
+            // Decide to place above or below based on space
+            const gap = 0; // seamless attach
+            const spaceBelow = window.innerHeight - r.bottom - gap;
+            const spaceAbove = r.top - gap;
+            let top;
+            const barEl = anchor;
+            // Clear attach classes first
+            suggestEl.classList.remove('attached-below','attached-above');
+            barEl.classList.remove('connected-below','connected-above');
+            if (spaceBelow >= suggH || spaceBelow >= spaceAbove) {
+                // Attach below; overlap by 1px to hide seam
+                top = r.bottom - 1 + gap;
+                suggestEl.classList.add('attached-below');
+                barEl.classList.add('connected-below');
+            } else {
+                // Attach above; overlap by 1px to hide seam
+                top = Math.max(12, r.top - suggH + 1);
+                suggestEl.classList.add('attached-above');
+                barEl.classList.add('connected-above');
+            }
+            suggestEl.style.left = `${Math.max(12, Math.min(r.left, window.innerWidth - width - 12))}px`;
+            suggestEl.style.top = `${top}px`;
+        }
+
+        async function fetchTables(force = false) {
+            const now = Date.now();
+            // Cache 60s
+            if (!force && tablesCache && (now - tablesCacheAt) < 60000) return tablesCache;
+            // Seed from sidebar metadata if available to avoid initial delay
+            if (!force && (!tablesCache || tablesCache.length === 0) && Array.isArray(tablesMeta) && tablesMeta.length) {
+                tablesCache = tablesMeta.map(t => t.name);
+                tablesCacheAt = now;
+                return tablesCache;
+            }
+            try {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 2500);
+                const resp = await fetch(`${API_BASE}/api/tables`, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
+                const data = await resp.json();
+                clearTimeout(timer);
+                tablesCache = (data && data.tables ? data.tables.map(t => t.name) : []) || [];
+                tablesCacheAt = now;
+            } catch (e) {
+                // Fall back to whatever we already have in memory
+                if (Array.isArray(tablesMeta) && tablesMeta.length) {
+                    tablesCache = tablesMeta.map(t => t.name);
+                    tablesCacheAt = now;
+                } else {
+                    tablesCache = [];
+                }
+            }
+            return tablesCache;
+        }
+
+        function renderSuggestions(list) {
+            ensureSuggestEl();
+            suggestEl.innerHTML = '';
+            suggestItems = [];
+            suggestIndex = -1;
+            if (!list || list.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'empty';
+                empty.textContent = 'No matches';
+                suggestEl.appendChild(empty);
+            } else {
+                list.forEach(name => {
+                    const row = document.createElement('div');
+                    row.className = 'sugg-item';
+                    row.innerHTML = `<i class="fas fa-layer-group sugg-icon"></i><span>${name}</span>`;
+                    row.addEventListener('mousedown', (ev) => { // mousedown to fire before input blur
+                        ev.preventDefault();
+                        selectSuggestion(name);
+                    });
+                    suggestEl.appendChild(row);
+                    suggestItems.push(row);
+                });
+            }
+            suggestEl.classList.add('open');
+            positionSuggest();
+        }
+
+        function closeSuggestions() {
+            if (suggestEl) suggestEl.classList.remove('open');
+            suggestIndex = -1;
+        }
+
+        function moveActive(delta) {
+            if (!suggestItems.length) return;
+            suggestIndex = (suggestIndex + delta + suggestItems.length) % suggestItems.length;
+            suggestItems.forEach((el, i) => el.classList.toggle('active', i === suggestIndex));
+        }
+
+        function selectSuggestion(name) {
+            searchInput.value = name;
+            closeSuggestions();
+            if (typeof loadGeoJSONLayer === 'function') {
+                try { loadGeoJSONLayer(name); } catch (e) { console.warn('load layer failed', e); }
+            }
+        }
+
+        // Debounce helper
+        function debounce(fn, ms) {
+            let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms); };
+        }
+
+        const handleSearchInput = debounce(async () => {
+            const q = (searchInput.value || '').trim().toLowerCase();
+            const names = await fetchTables();
+            const filtered = q
+                ? names.filter(n => n.toLowerCase().includes(q)).slice(0, 12)
+                : names.slice(0, 12); // when empty, show top items
+            renderSuggestions(filtered);
+        }, 150);
+
+        searchInput.addEventListener('input', handleSearchInput);
+        searchInput.addEventListener('focus', handleSearchInput);
+        searchInput.addEventListener('keydown', (e) => {
+            if (!suggestEl || !suggestEl.classList.contains('open')) return;
+            if (e.key === 'ArrowDown') { e.preventDefault(); moveActive(1); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); moveActive(-1); }
+            else if (e.key === 'Enter') {
+                if (suggestIndex >= 0 && suggestItems[suggestIndex]) {
+                    e.preventDefault();
+                    const name = suggestItems[suggestIndex].querySelector('span')?.textContent;
+                    if (name) selectSuggestion(name);
+                }
+            } else if (e.key === 'Escape') { closeSuggestions(); }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!suggestEl || !suggestEl.classList.contains('open')) return;
+            const inSuggest = suggestEl.contains(e.target);
+            const inBar = (searchInput?.closest('.search-bar') || null)?.contains(e.target);
+            if (!inSuggest && !inBar) closeSuggestions();
+        });
+        window.addEventListener('resize', positionSuggest);
+        window.addEventListener('scroll', positionSuggest, true);
+
+        // View button triggers search for exact match or shows suggestions if ambiguous
+        viewButton.addEventListener('click', async (e) => {
+            const q = (searchInput.value || '').trim();
+            if (!q) return;
+            const names = await fetchTables();
+            if (names.includes(q)) { selectSuggestion(q); return; }
+            const filtered = names.filter(n => n.toLowerCase().includes(q.toLowerCase())).slice(0, 12);
+            renderSuggestions(filtered);
+        });
+        const tableList = document.getElementById('tableList');
+
+        // Status elements
+        const statusIndicatorEl = document.getElementById('statusIndicator');
+        const statusTitleEl = document.getElementById('statusTitle');
+        const statusSubEl = document.getElementById('statusSub');
+
+        // Safe classList toggle helper
+        const safeToggleClass = (element, className, force) => {
+            if (!element || !element.classList) return false;
+            try {
+                if (force === undefined) {
+                    element.classList.toggle(className);
+                } else if (force) {
+                    element.classList.add(className);
+                } else {
+                    element.classList.remove(className);
+                }
+                return true;
+            } catch (e) {
+                console.error('Error toggling class:', e);
+                return false;
+            }
+        };
+
+// Position the attribute table anchored to a given button (defaults to bottom-right attributeTableBtn)
+function positionAttributeTable(anchorEl) {
+    const panel = document.getElementById('attributeTable');
+    const btn = anchorEl || document.getElementById('attributeTableBtn');
+    if (!btn || !panel) return;
+    const rect = btn.getBoundingClientRect();
+    const gap = 12; // spacing between button and panel
+    const ph = panel.offsetHeight || 280;
+    const pw = panel.offsetWidth || 480;
+
+    // Reset all first to avoid conflicting constraints
+    panel.style.left = panel.style.right = panel.style.top = panel.style.bottom = '';
+
+    // Determine which side to pop from based on button horizontal position
+    const fromLeftSide = rect.left < window.innerWidth / 2; // left column button -> pop to the right
+    const centerY = rect.top + rect.height / 2;
+
+    if (fromLeftSide) {
+        // Place panel to the RIGHT of the button
+        const desiredLeft = Math.max(10, rect.right + gap);
+        const desiredTop = Math.max(10, Math.min(window.innerHeight - ph - 10, centerY - ph / 2));
+        panel.style.left = `${desiredLeft}px`;
+        panel.style.top = `${desiredTop}px`;
+        panel.style.transformOrigin = 'center left';
+        panel.classList.add('from-left');
+    } else {
+        // Place panel to the LEFT of the button (using right/bottom for precision)
+        const desiredRight = Math.max(10, window.innerWidth - rect.left + gap);
+        const desiredTop = Math.max(10, Math.min(window.innerHeight - ph - 10, centerY - ph / 2));
+        panel.style.right = `${desiredRight}px`;
+        panel.style.top = `${desiredTop}px`;
+        panel.style.transformOrigin = 'center right';
+        panel.classList.remove('from-left');
+    }
+}
+
+// Reposition on resize to keep anchored near the last-used button
+let lastAnchorEl = null;
+window.addEventListener('resize', () => positionAttributeTable(lastAnchorEl));
+
+        // Sidebar toggle functionality with safe classList handling
+        if (sidebarToggle && sidebar) {
+            sidebarToggle.addEventListener(`click`, (e) => {
+                e.stopPropagation();
+                const isOpen = sidebar.classList.contains(`open`);
+                
+                // Toggle main sidebar
+                safeToggleClass(sidebar, 'open', !isOpen);
+                
+                // Close attribute sidebar when opening main sidebar
+                if (!isOpen) {
+                    safeToggleClass(attrSidebar, 'open', false);
+                    // Also close floating attribute table to avoid overlap
+                    if (attributeTable?.classList.contains('open')) {
+                        attributeTable.classList.remove('open');
+                    }
+                    // Reset attribute icon to table
+                    const attrIcon = attrSidebarToggle?.querySelector('i');
+                    if (attrIcon) {
+                        attrIcon.classList.remove('fa-times');
+                        attrIcon.classList.add('fa-table');
+                    }
+                }
+                
+                // Update sidebar toggle icon
+                const icon = sidebarToggle.querySelector(`i`);
+                if (icon) {
+                    const iconClasses = icon.classList;
+                    if (isOpen) {
+                        iconClasses.replace(`fa-times`, `fa-bars`);
+                    } else {
+                        iconClasses.replace(`fa-bars`, `fa-times`);
+                    }
+                }
+            });
+        }
+
+        // Attribute sidebar toggle (after DOM elements exist)
+        attrSidebarToggle.addEventListener(`click`, () => {
+            // Prefer attribute sidebar if present; otherwise fall back to floating attribute table
+            const panel = attrSidebar || attributeTable;
+            if (!panel) {
+                console.warn('No attribute UI panel found');
+                return;
+            }
+            const willOpen = !panel.classList.contains('open');
+            panel.classList.toggle('open');
+            console.debug('[UI] Attribute panel', willOpen ? 'opened' : 'closed');
+
+            // If we are using the floating attribute table, align it to the button on open
+            if (willOpen && panel === attributeTable) {
+                lastAnchorEl = attrSidebarToggle;
+                requestAnimationFrame(() => positionAttributeTable(attrSidebarToggle));
+            }
+
+            // Close main sidebar when opening attribute panel
+            if (willOpen && sidebar) {
+                sidebar.classList.remove('open');
+            }
+            // Close other overlays/panels that could block interaction
+            layersPanel?.classList.remove('open');
+            basemapPanel?.classList.remove('open');
+            uploadPanel?.classList.remove('open');
+            searchBackdrop?.classList.remove('open');
+            searchPalette?.classList.remove('open');
+
+            // Update attribute toggle icon safely
+            const attrIcon = attrSidebarToggle.querySelector(`i`);
+            if (attrIcon) {
+                if (panel.classList.contains(`open`)) {
+                    attrIcon.classList.remove(`fa-table`);
+                    attrIcon.classList.add(`fa-times`);
+                } else {
+                    attrIcon.classList.remove(`fa-times`);
+                    attrIcon.classList.add(`fa-table`);
+                }
+            }
+            // Ensure main sidebar toggle shows hamburger when its panel is closed
+            const mainIcon = sidebarToggle?.querySelector(`i`);
+            if (mainIcon) {
+                mainIcon.classList.remove(`fa-times`);
+                mainIcon.classList.add(`fa-bars`);
+            }
+        });
+
+        // Theme toggle functionality (start in light mode by default)
+        let currentTheme = `light`;
+        document.documentElement.setAttribute(`data-theme`, currentTheme);
+        // Set initial icon to indicate next theme (moon shown in light, sun in dark)
+        {
+            const icon = themeToggle.querySelector(`i`);
+            icon.classList.remove(`fa-sun`, `fa-moon`);
+            if (currentTheme === `light`) {
+                icon.classList.add(`fa-moon`);
+            } else {
+                icon.classList.add(`fa-sun`);
+            }
+        }
+
+        // Ensure sidebar toggle icons are correct on load (both closed)
+        (function initSidebarToggleIcons(){
+            const mainIcon = sidebarToggle.querySelector(`i`);
+            mainIcon.classList.remove(`fa-times`);
+            mainIcon.classList.add(`fa-bars`);
+            const attrIcon = attrSidebarToggle.querySelector(`i`);
+            attrIcon.classList.remove(`fa-times`);
+            attrIcon.classList.add(`fa-table`);
+        })();
+
+        themeToggle.addEventListener(`click`, () => {
+            currentTheme = currentTheme === `dark` ? `light` : `dark`;
+            document.documentElement.setAttribute(`data-theme`, currentTheme);
+
+            const icon = themeToggle.querySelector(`i`);
+            icon.classList.remove(`fa-sun`, `fa-moon`);
+            if (currentTheme === `light`) {
+                icon.classList.add(`fa-moon`);
+            } else {
+                icon.classList.add(`fa-sun`);
+            }
+        });
+
+        // Layers panel toggle
+        layersBtn.addEventListener(`click`, () => {
+            layersPanel.classList.toggle(`open`);
+            if (basemapPanel.classList.contains(`open`)) {
+                basemapPanel.classList.remove(`open`);
+            }
+        });
+
+        // Basemap panel toggle
+        basemapBtn.addEventListener(`click`, () => {
+            basemapPanel.classList.toggle(`open`);
+            if (layersPanel.classList.contains(`open`)) {
+                layersPanel.classList.remove(`open`);
+            }
+        });
+
+        // Basemap switching
+        document.querySelectorAll(`.basemap-option`).forEach(option => {
+            option.addEventListener(`click`, () => {
+                document.querySelectorAll(`.basemap-option`).forEach(opt => {
+                    opt.classList.remove(`active`);
+                });
+                option.classList.add(`active`);
+
+                const basemap = option.getAttribute(`data-basemap`);
+                
+                // Remove current layer
+                map.eachLayer(layer => {
+                    if (layer instanceof L.TileLayer) {
+                        map.removeLayer(layer);
+                    }
+                });
+
+                // Add selected layer
+                switch (basemap) {
+                    case `osm`:
+                        osmLayer.addTo(map);
+                        break;
+                    case `satellite`:
+                        satelliteLayer.addTo(map);
+                        break;
+                    case `roadmap`:
+                        roadmapLayer.addTo(map);
+                        break;
+                }
+
+                basemapPanel.classList.remove(`open`);
+            });
+        });
+
+        // Attribute table toggle: ensure no overlays block it
+        attributeTableBtn.addEventListener(`click`, () => {
+            const willOpen = !attributeTable.classList.contains('open');
+            attributeTable.classList.toggle('open');
+            console.debug('[UI] Attribute table', willOpen ? 'opened' : 'closed');
+
+            if (willOpen) {
+                // Always anchor to the left attribute button so panel appears in the preferred spot
+                const anchor = attrSidebarToggle || attributeTableBtn;
+                lastAnchorEl = anchor;
+                requestAnimationFrame(() => positionAttributeTable(anchor));
+
+                // Close other overlays/panels that could block interaction
+                layersPanel?.classList.remove('open');
+                basemapPanel?.classList.remove('open');
+                uploadPanel?.classList.remove('open');
+                searchBackdrop?.classList.remove('open');
+                searchPalette?.classList.remove('open');
+            }
+        });
+
+        closeAttributeTable.addEventListener(`click`, () => {
+            attributeTable.classList.remove(`open`);
+        });
+
+        // Initialize attribute table empty state
+        if (typeof resetAttributeTable === 'function') {
+            resetAttributeTable();
+        } else {
+            console.warn('resetAttributeTable not defined yet; skipping initial reset');
+        }
+
+        // Zoom controls
+        zoomIn.addEventListener(`click`, () => {
+            map.zoomIn();
+        });
+
+        zoomOut.addEventListener(`click`, () => {
+            map.zoomOut();
+        });
+
+        // Feature toggles functionality
+        document.querySelectorAll(`.feature-toggle`).forEach(toggle => {
+            toggle.addEventListener(`click`, () => {
+                toggle.classList.toggle(`active`);
+            });
+        });
+
+        // Layer toggles functionality
+        document.querySelectorAll(`.layer-item .feature-toggle`).forEach(toggle => {
+            toggle.addEventListener(`click`, (e) => {
+                e.stopPropagation();
+                toggle.classList.toggle(`active`);
+            });
+        });
+
+        // Remove layer functionality
+        const removeLayer = (button) => {
+            const layerItem = button.closest('.layer-item');
+            layerItem.style.animation = 'fadeOut 0.3s ease forwards';
+            setTimeout(() => {
+                layerItem.remove();
+            }, 300);
+        };
+
+        document.querySelectorAll(`.remove-layer`).forEach(button => {
+            button.addEventListener(`click`, (e) => {
+                e.stopPropagation();
+                removeLayer(button);
+            });
+        });
+
+        // Toggle all layers
+        document.getElementById('toggleAllLayers').addEventListener('click', () => {
+            const toggles = document.querySelectorAll('.layer-item .feature-toggle');
+            const allActive = Array.from(toggles).every(t => t.classList.contains('active'));
+            
+            toggles.forEach(toggle => {
+                // Set visual state
+                if (allActive) {
+                    toggle.classList.remove('active');
+                } else {
+                    toggle.classList.add('active');
+                }
+                // Sync map layer visibility
+                const item = toggle.closest('.layer-item');
+                const nameEl = item?.querySelector('.layer-name');
+                const layerName = nameEl?.textContent?.trim();
+                if (!layerName) return;
+                const lyr = layerRegistry[layerName];
+                if (!lyr) return;
+                if (toggle.classList.contains('active')) {
+                    lyr.addTo(map);
+                } else {
+                    map.removeLayer(lyr);
+                }
+            });
+        });
+
+        // Clear all layers
+        document.getElementById('clearAllLayers').addEventListener('click', () => {
+            const layerItems = document.querySelectorAll('.layer-item');
+            layerItems.forEach(item => {
+                // Remove corresponding map layer if present
+                const nameEl = item.querySelector('.layer-name');
+                const layerName = nameEl?.textContent?.trim();
+                if (layerName && layerRegistry[layerName]) {
+                    map.removeLayer(layerRegistry[layerName]);
+                }
+                item.style.animation = 'fadeOut 0.3s ease forwards';
+                setTimeout(() => {
+                    item.remove();
+                }, 300);
+            });
+        });
+
+        // Upload button functionality (toggle upload panel)
+        const uploadBtn = document.getElementById('uploadBtn');
+        // Position upload panel above the upload button
+        const positionUploadPanel = () => {
+            if (!uploadPanel.classList.contains('open')) return;
+            const btnRect = uploadBtn.getBoundingClientRect();
+            // Temporarily ensure panel is visible to measure
+            const prevVis = uploadPanel.style.visibility;
+            const prevOpacity = uploadPanel.style.opacity;
+            uploadPanel.style.visibility = 'hidden';
+            uploadPanel.style.opacity = '0';
+            // force layout
+            const panelWidth = uploadPanel.offsetWidth || 320;
+            const panelHeight = uploadPanel.offsetHeight || 220;
+            // Compute centered above
+            let left = btnRect.left + (btnRect.width / 2) - (panelWidth / 2);
+            let top = btnRect.top - panelHeight - 12; // 12px gap above
+            // Clamp within viewport
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            left = Math.max(12, Math.min(left, vw - panelWidth - 12));
+            // Prefer anchoring just above the button (expand upward). If not enough space, clamp to 12px from top.
+            top = Math.max(12, top);
+            uploadPanel.style.left = `${left}px`;
+            uploadPanel.style.top = `${top}px`;
+            // restore
+            uploadPanel.style.visibility = prevVis;
+            uploadPanel.style.opacity = prevOpacity;
+        };
+
+        const toggleUploadPanel = () => {
+            const willOpen = !uploadPanel.classList.contains('open');
+            uploadPanel.classList.toggle('open');
+            if (willOpen) {
+                // Close other panels when opening upload
+                layersPanel.classList.remove('open');
+                basemapPanel.classList.remove('open');
+                attributeTable.classList.remove('open');
+                // Next frame to allow open styles to apply, then position
+                requestAnimationFrame(() => {
+                    positionUploadPanel();
+                });
+            }
+        };
+        uploadBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleUploadPanel();
+        });
+        // Reposition dynamically as the panel's height/content changes
+        const uploadPanelResizeObs = new ResizeObserver(() => {
+            positionUploadPanel();
+        });
+        uploadPanelResizeObs.observe(uploadPanel);
+        function resetUploadUi() {
+            uploadProgressWrap.style.display = 'none';
+            uploadBar.style.width = '0%';
+            uploadPct.textContent = '0%';
+            uploadStatus.textContent = 'Preparing upload…';
+            saveUpload.disabled = false;
+            cancelUpload.disabled = false;
+        }
+        cancelUpload.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (currentUploadXhr) {
+                currentUploadXhr.abort();
+                currentUploadXhr = null;
+            }
+            resetUploadUi();
+            uploadPanel.classList.remove('open');
+        });
+        saveUpload.addEventListener('click', (e) => {
+            e.preventDefault();
+            const file = uploadFileInput.files && uploadFileInput.files[0];
+            if (!file) {
+                uploadProgressWrap.style.display = 'block';
+                uploadStatus.textContent = 'Please choose a file to upload.';
+                return;
+            }
+            // Only allow .zip for backend
+            const ext = (file.name.split('.').pop() || '').toLowerCase();
+            if (ext !== 'zip') {
+                uploadProgressWrap.style.display = 'block';
+                uploadStatus.textContent = 'Only .zip files are supported at the moment.';
+                return;
+            }
+            uploadProgressWrap.style.display = 'block';
+            uploadStatus.textContent = 'Uploading…';
+            saveUpload.disabled = true; // prevent double-submit
+            // Prepare form data
+            const fd = new FormData();
+            if (uploadNameInput.value.trim()) fd.append('name', uploadNameInput.value.trim());
+            fd.append('file', file, file.name);
+            // XHR for progress events
+            const xhr = new XMLHttpRequest();
+            currentUploadXhr = xhr;
+            xhr.open('POST', `${API_BASE}/api/upload`);
+            // Initialize progress explicitly at 0 on start
+            xhr.upload.onloadstart = () => {
+                uploadBar.style.width = '0%';
+                uploadPct.textContent = '0%';
+                positionUploadPanel();
+            };
+            xhr.upload.onprogress = (ev) => {
+                if (ev.lengthComputable) {
+                    let pct = Math.round((ev.loaded / ev.total) * 100);
+                    // Ensure we don't jump to 100% too early visually during upload
+                    if (pct === 100 && xhr.readyState !== 4) {
+                        pct = 99;
+                    }
+                    uploadBar.style.width = pct + '%';
+                    uploadPct.textContent = pct + '%';
+                    // Reposition in case height changed due to text wrapping
+                    positionUploadPanel();
+                }
+            };
+            xhr.onreadystatechange = () => {
+                if (xhr.readyState === 4) {
+                    currentUploadXhr = null;
+                    try {
+                        const resp = JSON.parse(xhr.responseText || '{}');
+                        if (xhr.status >= 200 && xhr.status < 300 && resp && resp.ok) {
+                            uploadBar.style.width = '100%';
+                            uploadPct.textContent = '100%';
+                            uploadStatus.textContent = 'Upload complete. Ingested to database.';
+                            // Refresh tables and auto-load the new layer if provided
+                            try { loadTables && loadTables(); } catch (_) {}
+                            if (resp.table && typeof loadGeoJSONLayer === 'function') {
+                                try { loadGeoJSONLayer(resp.table); } catch (e) { console.warn('Auto-load layer failed:', e); }
+                            }
+                            // Keep panel open; user can close when ready
+                            saveUpload.disabled = false;
+                            positionUploadPanel();
+                        } else {
+                            uploadStatus.textContent = resp.error ? `Upload failed: ${resp.error}` : `Upload failed (HTTP ${xhr.status})`;
+                            saveUpload.disabled = false;
+                            positionUploadPanel();
+                        }
+                    } catch (err) {
+                        uploadStatus.textContent = `Upload finished with an unexpected response (HTTP ${xhr.status}).`;
+                        saveUpload.disabled = false;
+                        positionUploadPanel();
+                    }
+                }
+            };
+            xhr.onerror = () => {
+                currentUploadXhr = null;
+                uploadStatus.textContent = 'Network error during upload.';
+                saveUpload.disabled = false;
+                positionUploadPanel();
+            };
+            xhr.send(fd);
+        });
+
+
+
+        // Live data wiring to backend APIs (no dummy data)
+        // Prefer same-origin; fallback for file:// or direct open
+        window.API_BASE = (window.location && window.location.origin && window.location.origin !== 'null')
+            ? window.location.origin
+            : 'http://127.0.0.1:5000';
+        // Local alias for convenience; ensures API_BASE is defined for template strings
+        const API_BASE = window.API_BASE;
+        // Ensure resetAttributeTable exists before any early calls
+        window.resetAttributeTable = window.resetAttributeTable || function() {
+            console.debug('resetAttributeTable (early stub)');
+        };
+        let tablesMeta = []; // [{name, count, has_spatial}]
+        const layerRegistry = {}; // table -> L.GeoJSON layer
+        // Distinct color generator using golden angle to maximize separation
+        const GOLDEN_ANGLE = 137.508;
+        let _seedHue = Math.floor(Math.random() * 360);
+        function hslToHex(H, S, L) {
+            const a = S * Math.min(L / 100, 1 - L / 100) / 100;
+            const f = n => {
+                const k = (n + H / 30) % 12;
+                const c = L / 100 - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+                return Math.round(255 * c).toString(16).padStart(2, '0');
+            };
+            return `#${f(0)}${f(8)}${f(4)}`;
+        }
+        function nextNiceColor() {
+            _seedHue = (_seedHue + GOLDEN_ANGLE) % 360;
+            return hslToHex(_seedHue, 65, 55);
+        }
+        // Track DB status to control interim UI and avoid flicker
+        let hasDbStatus = false; // becomes true after first successful response (connected/disconnected)
+        let lastDbStatus = null; // 'connected' | 'disconnected'
+        let lastDbMessage = null;
+        // Adaptive polling timer (30s when disconnected, 5m when connected)
+        let refreshTimerId = null;
+        let currentIntervalMs = 30000; // default to 30s until proven connected
+        function scheduleNextCheck() {
+            if (refreshTimerId) {
+                clearTimeout(refreshTimerId);
+                refreshTimerId = null;
+            }
+            const ms = (lastDbStatus === 'connected') ? (5 * 60 * 1000) : 30000;
+            currentIntervalMs = ms;
+            refreshTimerId = setTimeout(refreshDbStatus, ms);
+            console.debug(`[DBStatus] Next check in ${Math.round(ms / 1000)}s (status=${lastDbStatus || 'unknown'})`);
+        }
+
+        // Database status updater
+        function setStatus(colorVar, title, sub) {
+            console.log(`Setting status: ${title} - ${sub}`);
+            if (statusIndicatorEl) {
+                statusIndicatorEl.style.background = `var(${colorVar})`;
+                statusIndicatorEl.style.boxShadow = `0 0 8px var(${colorVar})`;
+            }
+            if (statusTitleEl) statusTitleEl.textContent = title;
+            if (statusSubEl) statusSubEl.textContent = sub;
+        }
+        
+        // Set initial status to 'Connecting...'
+        setStatus('--warning-color', 'Connecting...', 'Checking database status...');
+
+        async function refreshDbStatus() {
+            // Only show interim 'Checking...' BEFORE we have any status
+            console.debug('[DBStatus] Checking database status...');
+            if (!hasDbStatus) {
+                setStatus('--warning-color', 'Checking...', 'Verifying database connection');
+            }
+            
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 8000);
+                
+                // Make the request with cache-busting and no-cache headers
+                const response = await fetch(`${API_BASE}/api/status?_=${Date.now()}`, { 
+                    method: 'GET',
+                    cache: 'no-store',
+                    signal: controller.signal,
+                    headers: {
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin',
+                    redirect: 'error'
+                });
+                clearTimeout(timeout);
+                
+                // Always parse the response as JSON
+                const data = await response.json().catch(e => ({
+                    status: 'error',
+                    message: 'Invalid response from server',
+                    error: e.toString()
+                }));
+                
+                console.debug('[DBStatus] API Response:', data);
+                
+                // Handle the response
+                if (data && data.status === 'connected') {
+                    if (lastDbStatus !== 'connected') {
+                        setStatus('--success-color', 'Database Connected', 'Connection is active');
+                        lastDbMessage = 'Connection is active';
+                    }
+                    lastDbStatus = 'connected';
+                    hasDbStatus = true;
+                } else {
+                    // Keep the UI concise: hide backend error details
+                    console.error('[DBStatus] Database connection error (details hidden in UI):', data.message);
+                    if (lastDbStatus !== 'disconnected' || lastDbMessage !== 'Database connection failed') {
+                        setStatus('--error-color', 'Not Connected', 'Database connection failed');
+                        lastDbMessage = 'Database connection failed';
+                    }
+                    lastDbStatus = 'disconnected';
+                    hasDbStatus = true;
+                }
+                
+            } catch (error) {
+                console.error('[DBStatus] Error checking database status:', error);
+                // Keep UI concise; on error before any status, show Not Connected
+                if (!hasDbStatus) {
+                    setStatus('--error-color', 'Not Connected', 'Database connection failed');
+                    lastDbStatus = 'disconnected';
+                    lastDbMessage = 'Database connection failed';
+                    hasDbStatus = true;
+                }
+            } finally {
+                scheduleNextCheck();
+            }
+        }
+
+        // Fetch tables from backend
+        async function loadTables() {
+            try {
+                const res = await fetch(`${API_BASE}/api/tables`);
+                const json = await res.json();
+                if (json && Array.isArray(json.tables)) {
+                    tablesMeta = json.tables.sort((a, b) => a.name.localeCompare(b.name));
+                    renderTableList();
+                } else {
+                    console.warn('Invalid tables response');
+                }
+            } catch (e) {
+                console.error('Failed to load tables', e);
+                tableList.innerHTML = `<div style="color: var(--text-secondary); font-size: 12px;">Failed to load tables</div>`;
+            }
+        }
+
+        // Render scrollable, alphabetically sorted Tables list from tablesMeta
+        function renderTableList() {
+            if (!tableList) return;
+            if (!tablesMeta || tablesMeta.length === 0) {
+                tableList.innerHTML = `<div style="color: var(--text-secondary); font-size: 12px;">No tables available</div>`;
+                return;
+            }
+            tableList.innerHTML = tablesMeta.map(t => {
+                const badge = t.has_spatial ? 'Spatial' : 'Table';
+                const sub = `${t.count.toLocaleString()} rows`;
+                const icon = t.has_spatial ? 'fa-layer-group' : 'fa-table';
+                return `
+                <div class="table-row" data-table="${t.name}" data-spatial="${t.has_spatial}">
+                    <div>
+                        <div class="t-title"><i class="fas ${icon}" style="margin-right:8px;"></i>${t.name}</div>
+                        <div class="t-sub">${sub}</div>
+                    </div>
+                    <div class="t-badge">${badge}</div>
+                </div>`;
+            }).join('');
+            // Click handler -> load layer (if spatial) and load attribute data (no auto-open)
+            tableList.querySelectorAll('.table-row').forEach(row => {
+                row.addEventListener('click', async () => {
+                    const name = row.getAttribute('data-table');
+                    const spatial = row.getAttribute('data-spatial') === 'True' || row.getAttribute('data-spatial') === 'true';
+                    if (spatial) await loadGeoJSONLayer(name);
+                    await loadAttributeData(name);
+                    // Do not auto-open attribute sidebar/panel here
+                });
+            });
+        }
+
+        // Render simple stats summary
+        function renderStatsSummary() {
+            const section = document.querySelector('.stats-section');
+            if (!section) return;
+            const total = tablesMeta.length;
+            const spatialCount = tablesMeta.filter(t => t.has_spatial).length;
+            const nonSpatial = total - spatialCount;
+            const totalRows = tablesMeta.reduce((s, t) => s + (t.count || 0), 0);
+            section.innerHTML = `
+                <h3 class="section-title">
+                    <i class="fas fa-chart-bar"></i>
+                    Table Statistics
+                </h3>
+                <div class="stat-item">
+                    <span class="stat-label">Total Tables</span>
+                    <span class="stat-value">${total}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Spatial Tables</span>
+                    <span class="stat-value">${spatialCount}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Non-spatial Tables</span>
+                    <span class="stat-value">${nonSpatial}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Total Rows (approx)</span>
+                    <span class="stat-value">${totalRows.toLocaleString()}</span>
+                </div>
+            `;
+        }
+
+        // Sidebar spatial stats (from /api/stats)
+        function formatNumber(num) {
+            if (num == null || isNaN(num)) return '0';
+            return Number(num).toLocaleString(undefined, { maximumFractionDigits: 0 });
+        }
+        function formatMeters(m) {
+            if (m == null || isNaN(m)) return '0 m';
+            const n = Number(m);
+            if (n >= 1000) return `${(n/1000).toFixed(2)} km`;
+            return `${n.toFixed(0)} m`;
+        }
+        function formatArea(m2) {
+            if (m2 == null || isNaN(m2)) return '0 m²';
+            const n = Number(m2);
+            const km2 = n / 1_000_000;
+            if (km2 >= 0.01) return `${km2.toFixed(2)} km²`;
+            return `${n.toFixed(0)} m²`;
+        }
+        async function loadStats() {
+            try {
+                const res = await fetch(`${API_BASE}/api/stats`, { cache: 'no-store' });
+                if (!res.ok) {
+                    console.warn('Stats request failed with status', res.status);
+                    renderStats(null);
+                    return;
+                }
+                const ctype = res.headers.get('content-type') || '';
+                if (!ctype.includes('application/json')) {
+                    console.warn('Stats response is not JSON (content-type:', ctype, ')');
+                    renderStats(null);
+                    return;
+                }
+                const stats = await res.json();
+                renderStats(stats);
+            } catch (e) {
+                console.warn('Failed to load stats:', e);
+                renderStats(null);
+            }
+        }
+        function renderStats(stats) {
+            const section = document.querySelector('.stats-section');
+            if (!section) return;
+            const container = document.createElement('div');
+            container.className = 'stat-items';
+            if (!stats || stats.error) {
+                container.innerHTML = `<div class="stat-item"><span class="stat-label">No stats available</span></div>`;
+            } else {
+                const poly = stats.polygons || { feature_count: 0, total_area_m2: 0 };
+                const lines = stats.lines || { feature_count: 0, total_length_m: 0 };
+                const points = stats.points || { feature_count: 0 };
+                container.innerHTML = `
+                    <div class="stat-item">
+                        <span class="stat-label">Polygons</span>
+                        <span class="stat-value">${formatArea(poly.total_area_m2 || 0)} · ${formatNumber(poly.feature_count || 0)} features</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Polylines</span>
+                        <span class="stat-value">${formatMeters(lines.total_length_m || 0)} · ${formatNumber(lines.feature_count || 0)} features</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Points</span>
+                        <span class="stat-value">${formatNumber(points.feature_count || 0)} features</span>
+                    </div>`;
+            }
+            const placeholder = section.querySelector('.stat-item');
+            if (placeholder) section.replaceChild(container, placeholder); else section.appendChild(container);
+        }
+
+        // Load GeoJSON layer for a table
+        async function loadGeoJSONLayer(tableName) {
+            try {
+                const res = await fetch(`${API_BASE}/api/geojson/${encodeURIComponent(tableName)}`);
+                const geo = await res.json();
+                if (!geo || !geo.features || geo.features.length === 0) {
+                    console.warn('No features for', tableName);
+                    return;
+                }
+                // Remove previous layer if exists
+                if (layerRegistry[tableName]) {
+                    map.removeLayer(layerRegistry[tableName]);
+                }
+                // Generate a well-separated color using golden angle
+                const color = nextNiceColor();
+                const layer = L.geoJSON(geo, {
+                    style: { color, weight: 2, opacity: 0.9 },
+                    pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 5, color, fillColor: color, fillOpacity: 0.8 })
+                }).addTo(map);
+                layerRegistry[tableName] = layer;
+                // Detect a friendly type from first feature geometry
+                const g0 = geo.features[0]?.geometry?.type || '';
+                let prettyType = 'Unknown';
+                if (/Point/i.test(g0)) prettyType = 'Points';
+                else if (/LineString/i.test(g0)) prettyType = 'Lines';
+                else if (/Polygon/i.test(g0)) prettyType = 'Polygons';
+                const featuresCount = geo.features.length;
+                // Add/update panel entry for this layer
+                addLayerToPanel({ name: tableName, type: prettyType, features: featuresCount, color });
+                try {
+                    const b = layer.getBounds();
+                    if (b && b.isValid && b.isValid()) {
+                        map.flyToBounds(b, { padding: [32, 32], duration: 0.8, easeLinearity: 0.25 });
+                    }
+                } catch {}
+            } catch (e) {
+                console.error('Failed to load GeoJSON', e);
+            }
+        }
+
+        // Load attribute data for a table and render the attribute table
+        async function loadAttributeData(tableName) {
+            try {
+                const res = await fetch(`${API_BASE}/api/table/${encodeURIComponent(tableName)}`);
+                const json = await res.json();
+                if (!json || !Array.isArray(json.columns)) return;
+                renderAttributeTable(json.columns, json.data || [], tableName);
+            } catch (e) {
+                console.error('Failed to load attributes', e);
+            }
+        }
+
+        function renderAttributeTable(columns, rows, title) {
+            const thead = attributeTable.querySelector('thead');
+            const tbody = attributeTable.querySelector('tbody');
+            const h3 = attributeTable.querySelector('h3');
+            if (h3 && title) h3.firstChild && (h3.firstChild.textContent = ` ${title} Attributes`);
+            thead.innerHTML = `<tr>${columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
+            if (!rows || rows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${columns.length}" style="color: var(--text-secondary); text-align:center;">No records</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = rows.map(r => `
+                <tr>${columns.map(c => `<td>${r[c] != null ? r[c] : ''}</td>`).join('')}</tr>
+            `).join('');
+        }
+
+
+        // Add safe resetAttributeTable function if it doesn't exist
+        window.resetAttributeTable = window.resetAttributeTable || function() {
+            console.log('resetAttributeTable called (stub)');
+            // Add any necessary reset logic here
+        };
+        
+        // Add safe classList handling for null elements
+        const safeClassList = (element, action, className) => {
+            if (!element) {
+                console.warn('Attempted to modify classList on null element');
+                return false;
+            }
+            try {
+                if (action === 'add') element.classList.add(className);
+                else if (action === 'remove') element.classList.remove(className);
+                else if (action === 'toggle') element.classList.toggle(className);
+                return true;
+            } catch (e) {
+                console.error('Error modifying classList:', e);
+                return false;
+            }
+        };
+
+        // Initialize UI and start status checks
+        function initializeApp() {
+            try {
+                // Set initial status
+                setStatus('--warning-color', 'Connecting...', 'Checking database status...');
+                
+                // Initialize UI
+                // Provide a no-op stub if initUi is missing
+                if (typeof initUi !== 'function') {
+                    window.initUi = function() {};
+                }
+                if (typeof initUi === 'function') {
+                    initUi();
+                } else {
+                    console.error('initUi function not found');
+                }
+                
+                // Start status checks
+                refreshDbStatus(); // subsequent checks are scheduled adaptively inside the function
+                // Load sidebar stats
+                loadStats();
+                // Load tables list under the Tables section
+                loadTables();
+                
+                console.log('Application initialized successfully');
+            } catch (error) {
+                console.error('Error initializing app:', error);
+                setStatus('--error-color', 'Initialization Error', 'Check console for details');
+            }
+        }
+
+        // Fix the button click handler that's causing the null error
+        document.addEventListener('click', function(e) {
+            const button = e.target.closest('button');
+            if (button) {
+                try {
+                    // Handle button clicks safely
+                    if (button.classList && button.classList.contains('some-button-class')) {
+                        // Your button click handler code here
+                    }
+                } catch (e) {
+                    console.error('Error handling button click:', e);
+                }
+            }
+        });
+
+        // Start the app when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeApp);
+        } else {
+            // Small delay to ensure all elements are available
+            setTimeout(initializeApp, 100);
+        }
+        
+        // Build search items from live tables
+        function getSearchItems() {
+            return (tablesMeta || []).map(t => ({
+                name: t.name,
+                type: t.has_spatial ? 'Spatial' : 'Table',
+                icon: t.has_spatial ? 'fa-layer-group' : 'fa-table'
+            }));
+        }
+
+        // The following demo-only helpers are no longer used and are intentionally not called
+        function ensureDemoLayer(layerMeta) {
+            const name = layerMeta.name;
+            if (demoLayerRegistry[name]) return demoLayerRegistry[name];
+            const group = L.layerGroup();
+
+            // Realistic demo coords around Harare CBD (WGS84)
+            if (name === 'POIs_Centers') {
+                const points = [
+                    [-17.8275, 31.0480],
+                    [-17.8310, 31.0552],
+                    [-17.8335, 31.0505]
+                ];
+                points.forEach(([lat,lng], i) => L.marker([lat, lng]).addTo(group).bindPopup(`<strong>${name}</strong><br>POI ${i+1}`));
+            } else if (name === 'Roads_Primary') {
+                const line = L.polyline(
+                    [
+                        [-17.8296, 31.0415],
+                        [-17.8291, 31.0488],
+                        [-17.8285, 31.0560],
+                        [-17.8283, 31.0615]
+                    ],
+                    { color: '#4fc3f7', weight: 4, opacity: 0.9 }
+                );
+                line.addTo(group);
+            } else if (name === 'Parcels_2024') {
+                const rect = L.polygon([
+                    [-17.8315, 31.0500],
+                    [-17.8315, 31.0556],
+                    [-17.8282, 31.0556],
+                    [-17.8282, 31.0500]
+                ], { color: '#a5d6a7', weight: 2, fillOpacity: 0.25 });
+                rect.addTo(group);
+            } else {
+                // Fallback near current center if unknown
+                const c = map.getCenter();
+                L.circle([c.lat, c.lng], { radius: 200, color: '#888' }).addTo(group);
+            }
+            const bounds = group.getBounds();
+            const record = { group, bounds, type: layerMeta.type, features: layerMeta.features };
+            demoLayerRegistry[name] = record;
+            return record;
+        }
+
+        function addLayerToPanel(layerMeta) {
+            const existing = Array.from(document.querySelectorAll('.layers-panel .layer-item .layer-name'))
+                .find(el => el.textContent === layerMeta.name);
+            if (existing) return; // already present
+            const item = document.createElement('div');
+            item.className = 'layer-item';
+            item.innerHTML = `
+                <div class="layer-info">
+                    <div class="layer-name">${layerMeta.name}</div>
+                </div>
+                <div class="layer-actions">
+                    <input class="layer-color-input" type="color" value="#4f9eff" title="Change color" style="position:absolute;opacity:0;width:0;height:0;border:0;padding:0;">
+                    <button class="color-swatch glass" title="Change color" style="width:27px;height:27px;border-radius:50%;border:none;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;box-shadow: inset 0 0 0 2px rgba(255,255,255,0.08);"></button>
+                    <div class="feature-toggle active"></div>
+                    <button class="remove-layer glass" title="Remove layer">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>`;
+            document.getElementById('layersPanel').appendChild(item);
+            // Wire up color swatch + hidden input
+            const colorInput = item.querySelector('.layer-color-input');
+            const swatchBtn = item.querySelector('.color-swatch');
+            const removeBtnRef = item.querySelector('.remove-layer');
+            // Size swatch to 0.75x of the remove button circle to match visual scale
+            try {
+                const rb = removeBtnRef.getBoundingClientRect();
+                const target = Math.max(18, Math.round(rb.width * 0.75));
+                swatchBtn.style.width = `${target}px`;
+                swatchBtn.style.height = `${target}px`;
+            } catch {}
+            const setSwatch = (clr) => {
+                swatchBtn.style.background = clr;
+            };
+            setSwatch(colorInput.value);
+            swatchBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                colorInput.showPicker ? colorInput.showPicker() : colorInput.click();
+            });
+            const applyColor = (clr) => {
+                const lyr = layerRegistry[layerMeta.name];
+                if (!lyr) return;
+                try {
+                    if (lyr.setStyle) lyr.setStyle({ color: clr, fillColor: clr });
+                    if (lyr.eachLayer) lyr.eachLayer(l => { if (l.setStyle) l.setStyle({ color: clr, fillColor: clr }); });
+                } catch (err) { console.warn('Failed to set layer color', err); }
+            };
+            colorInput.addEventListener('input', () => {
+                const clr = colorInput.value;
+                setSwatch(clr);
+                applyColor(clr);
+            });
+            // Wire up toggle to show/hide actual Leaflet layer from layerRegistry
+            const toggle = item.querySelector('.feature-toggle');
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggle.classList.toggle('active');
+                const lyr = layerRegistry[layerMeta.name];
+                if (lyr) {
+                    if (toggle.classList.contains('active')) {
+                        lyr.addTo(map);
+                    } else {
+                        map.removeLayer(lyr);
+                    }
+                }
+            });
+            // Wire up remove to remove from map and panel (and registry entry)
+            const removeBtn = item.querySelector('.remove-layer');
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                item.style.animation = 'fadeOut 0.3s ease forwards';
+                setTimeout(() => item.remove(), 300);
+                const lyr = layerRegistry[layerMeta.name];
+                if (lyr) {
+                    map.removeLayer(lyr);
+                }
+                // keep registry key so future loads overwrite; optional cleanup:
+                // delete layerRegistry[layerMeta.name];
+            });
+        }
+
+        function selectSearchLayer(layerMeta) {
+            const rec = ensureDemoLayer(layerMeta);
+            if (!map.hasLayer(rec.group)) {
+                rec.group.addTo(map);
+            }
+            addLayerToPanel(layerMeta);
+            if (rec.bounds && rec.bounds.isValid()) {
+                map.flyToBounds(rec.bounds.pad(0.2), { padding: [32, 32], duration: 0.8, easeLinearity: 0.25 });
+            }
+            // Populate attribute table for the selected layer (do not auto-open)
+            populateAttributeTable(layerMeta);
+            // Opening is controlled by the attribute table icon only
+            closeSearchPalette();
+        }
+
+        // Removed demo attribute table population helpers
+
+        function openSearchPalette(focusQuick = true) {
+            searchBackdrop.classList.add('open');
+            searchPalette.classList.add('open');
+            // Optionally focus the popup input
+            if (focusQuick) {
+                setTimeout(() => quickSearchInput.focus(), 10);
+            }
+            renderResults(getSearchItems());
+        }
+
+        function closeSearchPalette() {
+            searchBackdrop.classList.remove('open');
+            searchPalette.classList.remove('open');
+            quickSearchInput.value = '';
+            searchResults.innerHTML = '';
+        }
+
+        function renderResults(layers) {
+            if (!layers || layers.length === 0) {
+                searchResults.innerHTML = `<div class="search-result"><div></div><div class="result-sub">No results</div><div></div></div>`;
+                return;
+            }
+            const html = layers.map(l => {
+                const summary = `${l.type}`;
+                return `
+                <div class="search-result" data-layer="${l.name}" data-type="${l.type}">
+                    <div class="result-icon"><i class="fas ${l.icon || 'fa-database'}"></i></div>
+                    <div>
+                        <div class="result-title">${l.name}</div>
+                        <div class="result-sub">${summary}</div>
+                    </div>
+                    <div class="result-badge">${l.type}</div>
+                </div>`;
+            }).join('');
+            searchResults.innerHTML = html;
+            // Attach click behavior (do not auto-open attribute UI)
+            searchResults.querySelectorAll('.search-result').forEach(row => {
+                row.addEventListener('click', () => {
+                    const name = row.getAttribute('data-layer');
+                    const type = row.getAttribute('data-type');
+                    const t = (tablesMeta || []).find(x => x.name === name);
+                    if (!t) return;
+                    if (t.has_spatial) {
+                        loadGeoJSONLayer(name);
+                    }
+                    loadAttributeData(name);
+                    // Do not auto-open attribute sidebar/panel here
+                });
+            });
+        }
+
+        // Filter as you type
+        quickSearchInput?.addEventListener('input', (e) => {
+            const q = e.target.value.trim().toLowerCase();
+            const items = getSearchItems();
+            const filtered = !q ? items : items.filter(l =>
+                l.name.toLowerCase().includes(q) ||
+                l.type.toLowerCase().includes(q)
+            );
+            renderResults(filtered);
+        });
+
+        // Enter selects the first visible result
+        quickSearchInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const first = searchResults.querySelector('.search-result');
+                if (first) {
+                    const name = first.getAttribute('data-layer');
+                    const t = (tablesMeta || []).find(x => x.name === name);
+                    if (t) {
+                        if (t.has_spatial) loadGeoJSONLayer(name);
+                        loadAttributeData(name);
+                        // Do not auto-open attribute sidebar/panel here
+                    }
+                }
+            }
+        });
+
+        // View button triggers selection of first filtered result
+        viewButton?.addEventListener('click', () => {
+            // Open popup and sync query; auto-select first result to show data
+            if (!searchPalette.classList.contains('open')) openSearchPalette();
+            if (quickSearchInput && searchInput) {
+                quickSearchInput.value = searchInput.value || '';
+                const q = quickSearchInput.value.trim().toLowerCase();
+                const items = getSearchItems();
+                const filtered = !q ? items : items.filter(l =>
+                    l.name.toLowerCase().includes(q) ||
+                    l.type.toLowerCase().includes(q)
+                );
+                renderResults(filtered);
+                // Auto-select first visible suggestion
+                const first = searchResults.querySelector('.search-result');
+                if (first) {
+                    const name = first.getAttribute('data-layer');
+                    const t = (tablesMeta || []).find(x => x.name === name);
+                    if (t) {
+                        if (t.has_spatial) loadGeoJSONLayer(name);
+                        loadAttributeData(name);
+                        // Do not auto-open attribute sidebar/panel here
+                    }
+                }
+            }
+        });
+
+        // Clicking the whole search bar opens the popup (not just the input)
+        const searchBarEl = document.querySelector('.search-bar.glass');
+        searchBarEl?.addEventListener('click', (e) => {
+            // When clicking the bar (outside the input/button), DO NOT open the overlay/backdrop.
+            const target = e.target;
+            const isButton = (target instanceof HTMLElement) && target.closest('#viewButton');
+            const isInput = (target instanceof HTMLElement) && target.closest('#searchInput');
+            if (isButton) return;
+            // Focus the input and trigger inline suggestions only
+            searchInput?.focus();
+            handleSearchInput();
+        });
+
+        // Shortcuts: Ctrl+K (or Cmd+K), and forward slash '/'
+        document.addEventListener('keydown', (e) => {
+            // Close search palette on Escape
+            if (e.key === 'Escape') {
+                closeSearchPalette();
+                return;
+            }
+            const mod = e.ctrlKey || e.metaKey;
+            if (mod && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                if (searchPalette.classList.contains('open')) closeSearchPalette(); else openSearchPalette();
+            } else if (!e.metaKey && !e.ctrlKey && e.key === '/') {
+                // Do not trigger inside inputs
+                const tag = (document.activeElement?.tagName || '').toLowerCase();
+                if (tag !== 'input' && tag !== 'textarea') {
+                    e.preventDefault();
+                    openSearchPalette();
+                }
+            }
+        });
+
+        // Close on backdrop click
+        searchBackdrop.addEventListener('click', closeSearchPalette);
+
+        searchInput.addEventListener(`input`, (e) => {
+            const q = (e.target.value || '').trim().toLowerCase();
+            // Do NOT open the overlay/backdrop here; only update suggestions cache for View/overlay if opened elsewhere
+            if (quickSearchInput) quickSearchInput.value = e.target.value || '';
+            const items = getSearchItems();
+            const filtered = !q ? items : items.filter(l =>
+                l.name.toLowerCase().includes(q) ||
+                l.type.toLowerCase().includes(q)
+            );
+            renderResults(filtered);
+        });
+
+        // Also open suggestions when the main search gains focus (like typical site search)
+        searchInput.addEventListener('focus', (e) => {
+            // Do NOT open the overlay/backdrop when focusing the bottom search
+            if (quickSearchInput) quickSearchInput.value = searchInput.value || '';
+            const q = (searchInput.value || '').trim().toLowerCase();
+            const items = getSearchItems();
+            const filtered = !q ? items : items.filter(l =>
+                l.name.toLowerCase().includes(q) ||
+                l.type.toLowerCase().includes(q)
+            );
+            renderResults(filtered);
+        });
+
+        // Close panels when clicking outside
+        document.addEventListener(`click`, (e) => {
+            if (!layersBtn.contains(e.target) && !layersPanel.contains(e.target)) {
+                layersPanel.classList.remove(`open`);
+            }
+            if (!basemapBtn.contains(e.target) && !basemapPanel.contains(e.target)) {
+                basemapPanel.classList.remove(`open`);
+            }
+            if (!uploadBtn.contains(e.target) && !uploadPanel.contains(e.target)) {
+                uploadPanel.classList.remove('open');
+            }
+        });
+
+        // Close upload panel on Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                uploadPanel.classList.remove('open');
+            }
+        });
+
+        // Reposition on resize to stay anchored above button
+        window.addEventListener('resize', positionUploadPanel);
+
+        // Add some demo markers to show spatial data
+        const demoMarkers = [
+            { lat: 40.7128, lng: -74.0060, name: `Commercial District`, type: `building` },
+            { lat: 40.7580, lng: -73.9855, name: `Central Park Area`, type: `park` },
+            { lat: 40.7300, lng: -73.9950, name: `Transportation Hub`, type: `transport` }
+        ];
+
+        demoMarkers.forEach(marker => {
+            const icon = marker.type === `building` ? `🏢` : marker.type === `park` ? `🌳` : `🚇`;
+            L.marker([marker.lat, marker.lng])
+                .addTo(map)
+                .bindPopup(`<strong>${marker.name}</strong><br>Type: ${marker.type}`);
+        });
+
+        // Responsive handling
+        function handleResize() {
+            map.invalidateSize();
+        }
+
+        window.addEventListener(`resize`, handleResize);
+
+        // Initialize tooltips for better UX
+        document.querySelectorAll(`[title]`).forEach(element => {
+            element.addEventListener(`mouseenter`, () => {
+                // Custom tooltip implementation could go here
+            });
+        });
+    </script>
+
+    <!-- Kuse Inner Script -->
+    <script src="https://cdn.kuse.ai/sdk.prd.js"></script>
+    <!-- Direct debug script -->
+    <script>
+        console.log('=== DEBUG SCRIPT LOADED ===');
+        
+        // Check if elements exist
+        console.log('Status elements:', {
+            indicator: document.getElementById('statusIndicator'),
+            title: document.getElementById('statusTitle'),
+            sub: document.getElementById('statusSub')
+        });
+        
+        // Try to force update status
+        function forceUpdateStatus() {
+            const el = document.getElementById('statusIndicator');
+            if (el) {
+                el.style.background = 'var(--success-color)';
+                el.style.boxShadow = '0 0 8px var(--success-color)';
+                document.getElementById('statusTitle').textContent = 'Database Connected';
+                document.getElementById('statusSub').textContent = 'Backend connection OK';
+                console.log('=== STATUS FORCE UPDATED ===');
+            } else {
+                console.error('Status elements not found');
+            }
+        }
+        
+        // Try immediately and after a short delay
+        forceUpdateStatus();
+        setTimeout(forceUpdateStatus, 1000);
+    </script>
+</body>
+</html>

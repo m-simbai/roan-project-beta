@@ -3,12 +3,17 @@ from werkzeug.exceptions import RequestEntityTooLarge
 import os
 import tempfile
 import zipfile
+import datetime
 import io
 from sqlalchemy import create_engine, text, inspect
 from dotenv import load_dotenv
 
 import json
 import geopandas as gpd
+try:
+    from geoalchemy2 import Geometry
+except Exception:
+    Geometry = None
 from werkzeug.utils import secure_filename
 import uuid
 
@@ -31,11 +36,28 @@ def make_db_engine(isolation_level='AUTOCOMMIT'):
     elif url.startswith('postgresql://') and '+psycopg2' not in url:
         url = url.replace('postgresql://', 'postgresql+psycopg2://', 1)
     
+    # Ensure SSL and short connect timeout for Render / cloud Postgres
+    if url.startswith('postgresql+psycopg2://'):
+        if 'sslmode=' not in url:
+            sep = '&' if '?' in url else '?'
+            url = f"{url}{sep}sslmode=require"
+        # Fast fail if DB is unreachable
+        connect_args = {
+            'connect_timeout': 3,  # seconds
+            'sslmode': 'require',
+            # Fail fast on queries too
+            'options': '-c statement_timeout=2000'
+        }
+    else:
+        connect_args = {}
+
     return create_engine(
         url,
         isolation_level=isolation_level,
         pool_pre_ping=True,
-        pool_recycle=3600
+        pool_recycle=3600,
+        pool_timeout=5,
+        connect_args=connect_args
     )
 
 # Create the main database engine, using AUTOCOMMIT for safety on read-only pages
@@ -57,6 +79,104 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def _derive_table_name(preferred: str, original_filename: str) -> str:
+    base = (preferred or os.path.splitext(original_filename)[0]).strip()
+    # Basic normalization
+    safe = ''.join(c if (c.isalnum() or c == '_') else '_' for c in base)
+    if safe and safe[0].isdigit():
+        safe = f"t_{safe}"
+    return safe.lower() or f"t_{uuid.uuid4().hex[:8]}"
+
+def _ingest_zip_to_postgis(zip_path: str, table_name: str):
+    # Extract ZIP to temp dir and find first .shp
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(tmpdir)
+        shp_path = None
+        for root, _, files in os.walk(tmpdir):
+            for fn in files:
+                if fn.lower().endswith('.shp'):
+                    shp_path = os.path.join(root, fn)
+                    break
+            if shp_path:
+                break
+        if not shp_path:
+            raise ValueError('No .shp found inside the ZIP')
+        # Read with GeoPandas
+        gdf = gpd.read_file(shp_path)
+        if gdf.empty:
+            raise ValueError('Shapefile contains no features')
+        # Ensure CRS
+        if gdf.crs is None:
+            # Assume WGS84 if missing; adjust if your data differs
+            gdf.set_crs(epsg=4326, inplace=True)
+        else:
+            try:
+                gdf = gdf.to_crs(epsg=4326)
+            except Exception:
+                pass
+        # Standardize geometry column name to 'geom'
+        if gdf.geometry.name != 'geom':
+            gdf = gdf.rename_geometry('geom')
+        # Write to PostGIS
+        dtype = None
+        if Geometry is not None:
+            dtype = {'geom': Geometry('GEOMETRY', srid=4326)}
+        # Replace existing table if it exists
+        gdf.to_postgis(table_name, engine, if_exists='replace', index=False, dtype=dtype)
+        return {
+            'table': table_name,
+            'feature_count': int(len(gdf)),
+            'crs': str(gdf.crs) if gdf.crs else None
+        }
+
+# Upload API: accepts multipart/form-data with fields: name (optional), file (required .zip)
+@app.route('/api/upload', methods=['POST'])
+def api_upload():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part in the request'}), 400
+        file = request.files['file']
+        if not file or file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'Unsupported file type. Please upload a .zip file.'}), 400
+        original_name = secure_filename(file.filename)
+        uid = uuid.uuid4().hex
+        saved_name = f"{uid}_{original_name}"
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], saved_name)
+        file.save(save_path)
+        size = os.path.getsize(save_path)
+
+        preferred_name = request.form.get('name', '').strip()
+        table_name = _derive_table_name(preferred_name, original_name)
+
+        # Ingest into PostGIS
+        ingest_info = _ingest_zip_to_postgis(save_path, table_name)
+
+        return jsonify({
+            'ok': True,
+            'filename': original_name,
+            'saved_as': saved_name,
+            'size_bytes': size,
+            'message': 'File uploaded and ingested successfully',
+            **ingest_info
+        })
+    except RequestEntityTooLarge:
+        return jsonify({'error': 'File too large. Maximum allowed is 100MB.'}), 413
+    except Exception as e:
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
+
+# Helper you can call manually if needed to inspect routing
+def log_url_map_once():
+    try:
+        print("\n=== Flask URL Map ===")
+        for rule in sorted(app.url_map.iter_rules(), key=lambda r: r.rule):
+            print(f"  {rule}")
+        print("=== End URL Map ===\n")
+    except Exception as e:
+        print("Failed to log URL map:", e)
 
 # Expose Google Maps API key to all templates
 @app.context_processor
@@ -84,53 +204,28 @@ engine = make_db_engine()
 
 @app.route('/')
 def index():
-    """Main page showing database overview"""
-    try:
-        with engine.connect() as conn:
-            # Get all tables
-            inspector = inspect(engine)
-            tables = inspector.get_table_names()
-            
-            # Filter out PostGIS system tables
-            user_tables = [t for t in tables if not t.startswith(('spatial_ref_sys', 'geography_columns', 'geometry_columns'))]
-            
-            # Get table info
-            table_info = []
-            for table in user_tables:
-                try:
-                    # Get row count
-                    result = conn.execute(text(f"SELECT COUNT(*) FROM {table}"))
-                    count = result.scalar()
-                    
-                    # Get columns using information_schema (more reliable for PostGIS)
-                    col_result = conn.execute(text(f"""
-                        SELECT column_name, data_type, udt_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = '{table}'
-                        ORDER BY ordinal_position
-                    """))
-                    col_info = col_result.fetchall()
-                    col_names = [row[0] for row in col_info]
-                    
-                    # Check for spatial columns (geometry, geography, or common spatial column names)
-                    has_spatial = any(
-                        row[2] == 'geometry' or row[2] == 'geography' or 
-                        row[0].lower() in ['geometry', 'geom', 'the_geom', 'wkb_geometry']
-                        for row in col_info
-                    )
-                    
-                    table_info.append({
-                        'name': table,
-                        'count': count,
-                        'columns': col_names,
-                        'has_spatial': has_spatial
-                    })
-                except Exception as e:
-                    print(f"Error getting info for table {table}: {e}")
-            
-            return render_template('index.html', tables=table_info)
-    except Exception as e:
-        return f"Database connection error: {e}"
+    """Redirect root to the new Glass UI."""
+    return redirect(url_for('glass_ui'), code=302)
+
+@app.route('/glass')
+def glass_ui():
+    """Serve the new Glass UI template for testing/usage."""
+    return render_template('Roan Project Spatial Database UI.html')
+
+# Basic favicon handler to avoid noisy 404s in console
+@app.route('/favicon.ico')
+def favicon():
+    return ('', 204)
+
+# Redirect any unknown routes to the Glass UI so the new interface is default everywhere
+@app.errorhandler(404)
+def handle_404(e):
+    return redirect(url_for('glass_ui'))
+
+# Optional catch-all route to aggressively route everything to /glass
+@app.route('/<path:unused_path>')
+def catch_all(unused_path):
+    return redirect(url_for('glass_ui'))
 
 @app.route('/table/<table_name>')
 def view_table(table_name):
@@ -165,11 +260,8 @@ def view_table(table_name):
                     row_dict[col] = row[i]
                 data.append(row_dict)
             
-            return render_template('table.html', 
-                                 table_name=table_name, 
-                                 columns=col_names, 
-                                 data=data,
-                                 total_rows=len(data))
+            # Legacy template removed; redirect to main Glass UI
+            return redirect(url_for('glass_ui'))
     except Exception as e:
         return f"Error viewing table {table_name}: {e}"
 
@@ -216,6 +308,206 @@ def api_table_data(table_name):
                 'data': data,
                 'count': len(data)
             })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+@app.route('/api/status')
+def api_status():
+    """Simple health/status endpoint to report database connectivity."""
+    # Log the status check attempt
+    print("\n=== Database Status Check ===")
+    print(f"Time: {datetime.datetime.now()}")
+    print(f"Database URL: {os.environ.get('DATABASE_URL', 'Not set')[:20]}...")
+    
+    temp_engine = None
+    try:
+        # Create a fresh engine for this check
+        print("Creating new database engine...")
+        temp_engine = make_db_engine()
+        
+        # Try a lightweight query with a short timeout
+        print("Attempting to connect to database...")
+        with temp_engine.connect() as conn:
+            print("Connection established, running test query...")
+            result = conn.execute(text("SELECT 1"))
+            print("Query executed successfully")
+            
+            # Verify we got a result
+            if result.scalar() == 1:
+                status = {
+                    'status': 'connected',
+                    'message': 'Database connection successful',
+                    'timestamp': datetime.datetime.now().isoformat()
+                }
+                print("Status: CONNECTED")
+                return jsonify(status)
+            else:
+                raise Exception("Unexpected query result")
+                
+    except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(f"ERROR: {error_type} - {error_msg}")
+        
+        # Return detailed error response
+        return jsonify({
+            'status': 'disconnected',
+            'message': f'Database connection failed: {error_msg}',
+            'error_type': error_type,
+            'timestamp': datetime.datetime.now().isoformat()
+        }), 200
+        
+    finally:
+        # Ensure the temporary engine is disposed of properly
+        if temp_engine:
+            print("Cleaning up database engine...\n")
+            temp_engine.dispose()
+
+@app.route('/api/stats')
+def api_stats():
+    """Return sidebar table statistics: polygons area/count, polylines length/count, points count.
+    Uses PostGIS functions and aggregates over all public tables having a geometry column.
+    Distances/areas are in meters via geography casts.
+    """
+    try:
+        with engine.connect() as conn:
+            # Ensure PostGIS exists quickly; if missing, return zeros with hint
+            try:
+                conn.execute(text("SELECT PostGIS_Full_Version()"))
+            except Exception as e:
+                return jsonify({
+                    'polygons': {'feature_count': 0, 'total_area_m2': 0.0, 'tables': []},
+                    'lines': {'feature_count': 0, 'total_length_m': 0.0, 'tables': []},
+                    'points': {'feature_count': 0, 'tables': []},
+                    'note': 'PostGIS is not enabled on this database.'
+                })
+
+            # Discover tables with geometry columns in public schema
+            geom_rows = conn.execute(text(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns 
+                WHERE table_schema = 'public' AND udt_name = 'geometry'
+                """
+            )).fetchall()
+
+            polygons = {'feature_count': 0, 'total_area_m2': 0.0, 'tables': []}
+            lines = {'feature_count': 0, 'total_length_m': 0.0, 'tables': []}
+            points = {'feature_count': 0, 'tables': []}
+
+            for table_name, col in geom_rows:
+                # Determine dominant geometry type for this column
+                try:
+                    gtype_row = conn.execute(text(
+                        f"SELECT UPPER(Replace(ST_GeometryType(\"{col}\"), 'ST_', '')) as gtype \n"
+                        f"FROM \"{table_name}\" WHERE \"{col}\" IS NOT NULL LIMIT 1"
+                    )).fetchone()
+                    if not gtype_row or not gtype_row[0]:
+                        continue
+                    gtype = gtype_row[0]
+                except Exception:
+                    continue
+
+                # Compute per-table stats depending on type family
+                if 'POLYGON' in gtype:
+                    q = text(
+                        f"SELECT COUNT(*) as cnt, COALESCE(SUM(ST_Area(\"{col}\"::geography)),0) as area FROM \"{table_name}\" WHERE \"{col}\" IS NOT NULL"
+                    )
+                    row = conn.execute(q).fetchone()
+                    cnt = int(row[0] or 0)
+                    area = float(row[1] or 0.0)
+                    if cnt:
+                        polygons['feature_count'] += cnt
+                        polygons['total_area_m2'] += area
+                        polygons['tables'].append({'table': table_name, 'count': cnt, 'area_m2': area})
+                elif 'LINESTRING' in gtype:
+                    q = text(
+                        f"SELECT COUNT(*) as cnt, COALESCE(SUM(ST_Length(\"{col}\"::geography)),0) as len FROM \"{table_name}\" WHERE \"{col}\" IS NOT NULL"
+                    )
+                    row = conn.execute(q).fetchone()
+                    cnt = int(row[0] or 0)
+                    length_m = float(row[1] or 0.0)
+                    if cnt:
+                        lines['feature_count'] += cnt
+                        lines['total_length_m'] += length_m
+                        lines['tables'].append({'table': table_name, 'count': cnt, 'length_m': length_m})
+                elif 'POINT' in gtype:
+                    q = text(
+                        f"SELECT COUNT(*) as cnt FROM \"{table_name}\" WHERE \"{col}\" IS NOT NULL"
+                    )
+                    row = conn.execute(q).fetchone()
+                    cnt = int(row[0] or 0)
+                    if cnt:
+                        points['feature_count'] += cnt
+                        points['tables'].append({'table': table_name, 'count': cnt})
+                else:
+                    # Skip unsupported geometry types for the sidebar summary
+                    continue
+
+            # Round totals to sensible precision
+            polygons['total_area_m2'] = round(polygons['total_area_m2'], 2)
+            lines['total_length_m'] = round(lines['total_length_m'], 2)
+
+            return jsonify({'polygons': polygons, 'lines': lines, 'points': points})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tables')
+def api_tables():
+    """List tables with basic metadata used by the Glass UI."""
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+            user_tables = [t for t in tables if not t.startswith(('spatial_ref_sys', 'geography_columns', 'geometry_columns'))]
+
+            table_info = []
+            for table in user_tables:
+                try:
+                    # Count rows
+                    result = conn.execute(text(f"SELECT COUNT(*) FROM \"{table}\""))
+                    count = result.scalar() or 0
+
+                    # Column info
+                    col_result = conn.execute(text(f"""
+                        SELECT column_name, data_type, udt_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                        ORDER BY ordinal_position
+                    """))
+                    col_info = col_result.fetchall()
+                    col_names = [row[0] for row in col_info]
+
+                    # Spatial flag
+                    has_spatial = any(
+                        row[2] == 'geometry' or row[2] == 'geography' or 
+                        row[0].lower() in ['geometry', 'geom', 'the_geom', 'wkb_geometry']
+                        for row in col_info
+                    )
+
+                    table_info.append({
+                        'name': table,
+                        'count': int(count),
+                        'columns': col_names,
+                        'has_spatial': has_spatial
+                    })
+                except Exception as inner_e:
+                    # Skip problematic table but continue
+                    print(f"/api/tables: error on table {table}: {inner_e}")
+
+            return jsonify({'tables': table_info})
+    except Exception as e:
+        return jsonify({'error': str(e), 'tables': []})
+
+# Diagnostics: list all registered routes to verify active endpoints in the running server
+@app.route('/api/routes')
+def api_routes():
+    try:
+        routes = []
+        for rule in sorted(app.url_map.iter_rules(), key=lambda r: r.rule):
+            methods = ','.join(sorted(m for m in rule.methods if m not in {'HEAD', 'OPTIONS'}))
+            routes.append({'rule': rule.rule, 'endpoint': rule.endpoint, 'methods': methods})
+        return jsonify({'routes': routes})
     except Exception as e:
         return jsonify({'error': str(e)})
 
@@ -449,12 +741,8 @@ def map_view(table_name):
             count_result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
             total_count = count_result.scalar()
             
-            return render_template('map.html', 
-                                 table_name=table_name,
-                                 map_bounds=map_bounds,
-                                 total_count=total_count,
-                                 filter_query=filter_query,
-                                 filter_type=filter_type)
+            # Legacy template removed; redirect to main Glass UI
+            return redirect(url_for('glass_ui'))
     except Exception as e:
         return f"Error loading map for table {table_name}: {e}"
 
@@ -462,7 +750,8 @@ def map_view(table_name):
 def upload_shapefile():
     """Upload shapefile page and handler"""
     if request.method == 'GET':
-        return render_template('upload.html')
+        # Legacy template removed; send users to the new Glass UI
+        return redirect(url_for('glass_ui'))
     
     # Handle POST request (file upload)
     if 'file' not in request.files:
