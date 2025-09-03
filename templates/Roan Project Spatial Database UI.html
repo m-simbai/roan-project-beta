@@ -365,8 +365,8 @@
         }
 
         /* When dropdown attaches, remove the touching radius so they look connected */
-        .search-bar.connected-below { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; }
-        .search-bar.connected-above { border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; }
+        .search-bar.connected-below { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; box-shadow: none; }
+        .search-bar.connected-above { border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; box-shadow: none; }
 
         .search-input {
             flex: 1;
@@ -399,6 +399,89 @@
         }
 
         /* Glass round remove button (shared with #removeBtn) */
+
+        /* ===== Inline Search Suggestions (Glass) ===== */
+        .search-suggest {
+            position: fixed;
+            z-index: 2000;
+            max-height: min(50vh, 420px);
+            overflow: auto;
+            /* glass look */
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px) saturate(120%);
+            -webkit-backdrop-filter: blur(12px) saturate(120%);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+            border-radius: 16px;
+            overflow: hidden; /* clip inner content to radius to avoid halo */
+            color: var(--text-primary);
+            padding: 6px;
+            display: none; /* toggled by .open */
+            background-clip: padding-box;
+        }
+        .search-suggest.open { display: block; }
+        .search-suggest.attached-below { border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; margin-top: -2px; }
+        .search-suggest.attached-above { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; margin-bottom: -2px; }
+
+        .search-suggest .sugg-item,
+        .search-suggest .empty {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            line-height: 1.2;
+            color: var(--text-primary);
+        }
+        .search-suggest .empty {
+            justify-content: center;
+            color: var(--text-secondary);
+            background: rgba(255,255,255,0.06);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.08);
+            border: none;
+            outline: none;
+            background-clip: padding-box;
+        }
+        .search-suggest .sugg-item:hover { background: rgba(255,255,255,0.10); }
+        .search-suggest .sugg-item.active { background: rgba(255,255,255,0.16); }
+        /* In light theme, avoid white hover glow */
+        [data-theme="light"] .search-suggest .sugg-item:hover { background: rgba(0,0,0,0.08); }
+        [data-theme="light"] .search-suggest .sugg-item.active { background: rgba(0,0,0,0.12); }
+        .search-suggest .sugg-icon { color: var(--text-secondary); width: 18px; text-align: center; }
+
+        /* Light theme: make dropdown slightly darker so it doesn't look flat white */
+        body[data-theme="light"] .search-suggest {
+            /* flat overlay to avoid bright top rim */
+            background: rgba(0,0,0,0.12) !important;
+            background-image: none !important;
+            border: none !important; /* remove outer border that halos */
+            outline: none !important;
+            background-clip: padding-box !important;
+            /* soft drop + inner edge for definition without halo */
+            box-shadow: 0 10px 20px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(0,0,0,0.28) !important;
+            /* disable blur on light theme to prevent white halo at rounded corners */
+            backdrop-filter: saturate(120%) blur(0px) !important;
+            -webkit-backdrop-filter: saturate(120%) blur(0px) !important;
+            padding: 4px;
+        }
+        /* Light theme: match search bar transparency to 'No matches' */
+        body[data-theme="light"] .search-bar.glass {
+            background: rgba(0,0,0,0.12) !important;
+            border: none !important;
+            background-image: none !important;
+            backdrop-filter: saturate(120%) blur(0px) !important;
+            -webkit-backdrop-filter: saturate(120%) blur(0px) !important;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(0,0,0,0.28) !important;
+        }
+        body[data-theme="light"] .search-suggest .sugg-item:hover { background: rgba(0,0,0,0.08); }
+        body[data-theme="light"] .search-suggest .sugg-item.active { background: rgba(0,0,0,0.12); }
+        body[data-theme="light"] .search-suggest .empty {
+            background: rgba(0,0,0,0.14);
+            border: none !important;
+            outline: none !important;
+            color: rgba(0,0,0,0.72);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.10);
+        }
         .remove-button, .remove-layer {
             width: 48px;
             height: 48px;
@@ -479,8 +562,12 @@
 }
 
 [data-theme="light"] .view-button {
-    color: #000000;
+    background: rgba(0,0,0,0.06);
+    border-color: rgba(0,0,0,0.18);
+    color: #1a1a1a;
 }
+[data-theme="light"] .view-button:hover { background: rgba(0,0,0,0.10); }
+[data-theme="light"] .view-button:active { background: rgba(0,0,0,0.14); transform: translateY(0); }
 
 /* Upload button icon follows theme: default white; light mode black */
 [data-theme="light"] .upload-button i {
@@ -1515,13 +1602,13 @@
             suggestEl.classList.remove('attached-below','attached-above');
             barEl.classList.remove('connected-below','connected-above');
             if (spaceBelow >= suggH || spaceBelow >= spaceAbove) {
-                // Attach below; overlap by 1px to hide seam
-                top = r.bottom - 1 + gap;
+                // Attach below; overlap by 2px to hide seam fully
+                top = r.bottom - 2 + gap;
                 suggestEl.classList.add('attached-below');
                 barEl.classList.add('connected-below');
             } else {
-                // Attach above; overlap by 1px to hide seam
-                top = Math.max(12, r.top - suggH + 1);
+                // Attach above; overlap by 2px to hide seam fully
+                top = Math.max(12, r.top - suggH + 2);
                 suggestEl.classList.add('attached-above');
                 barEl.classList.add('connected-above');
             }
@@ -2318,13 +2405,21 @@ window.addEventListener('resize', () => positionAttributeTable(lastAnchorEl));
                 const badge = t.has_spatial ? 'Spatial' : 'Table';
                 const sub = `${t.count.toLocaleString()} rows`;
                 const icon = t.has_spatial ? 'fa-layer-group' : 'fa-table';
+                const downloadBtn = t.has_spatial
+                    ? `<button class="action-button download-btn" data-download="${t.name}" title="Download shapefile" style="margin-left:10px;">
+                            <i class="fas fa-download"></i>
+                       </button>`
+                    : '';
                 return `
                 <div class="table-row" data-table="${t.name}" data-spatial="${t.has_spatial}">
                     <div>
                         <div class="t-title"><i class="fas ${icon}" style="margin-right:8px;"></i>${t.name}</div>
                         <div class="t-sub">${sub}</div>
                     </div>
-                    <div class="t-badge">${badge}</div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div class="t-badge">${badge}</div>
+                        ${downloadBtn}
+                    </div>
                 </div>`;
             }).join('');
             // Click handler -> load layer (if spatial) and load attribute data (no auto-open)
@@ -2337,6 +2432,50 @@ window.addEventListener('resize', () => positionAttributeTable(lastAnchorEl));
                     // Do not auto-open attribute sidebar/panel here
                 });
             });
+            // Wire download buttons (prevent row click)
+            tableList.querySelectorAll('.download-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const name = btn.getAttribute('data-download');
+                    if (name) downloadShapefile(name);
+                });
+            });
+        }
+
+        // Trigger shapefile download for a table via backend API
+        async function downloadShapefile(tableName) {
+            const url = `${API_BASE}/api/download-shapefile?table=${encodeURIComponent(tableName)}`;
+            try {
+                const res = await fetch(url, { method: 'GET' });
+                if (!res.ok) {
+                    // Try to extract JSON error
+                    try {
+                        const err = await res.json();
+                        alert(`Download failed: ${err.error || res.statusText}`);
+                    } catch {
+                        alert(`Download failed with status ${res.status}`);
+                    }
+                    return;
+                }
+                const ctype = res.headers.get('content-type') || '';
+                if (ctype.includes('application/json')) {
+                    const err = await res.json();
+                    alert(`Download error: ${err.error || 'Unknown error'}`);
+                    return;
+                }
+                const blob = await res.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = objectUrl;
+                a.download = `${tableName}_shapefile.zip`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
+            } catch (e) {
+                console.error('Failed to download shapefile', e);
+                alert('Download failed to start. Please try again.');
+            }
         }
 
         // Render simple stats summary

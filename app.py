@@ -20,6 +20,9 @@ import uuid
 # Load environment variables
 load_dotenv()
 
+# Offline mode toggle: set OFFLINE_MODE=1 to run UI without a database
+OFFLINE_MODE = str(os.getenv('OFFLINE_MODE', '0')).lower() in {'1', 'true', 'yes'}
+
 def make_db_engine(isolation_level='AUTOCOMMIT'):
     """Create a new database engine with proper settings."""
     url = os.getenv('DATABASE_URL')
@@ -60,8 +63,10 @@ def make_db_engine(isolation_level='AUTOCOMMIT'):
         connect_args=connect_args
     )
 
-# Create the main database engine, using AUTOCOMMIT for safety on read-only pages
-engine = make_db_engine()
+# Create the main database engine only when not in OFFLINE mode
+engine = None
+if not OFFLINE_MODE:
+    engine = make_db_engine()
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
@@ -134,6 +139,8 @@ def _ingest_zip_to_postgis(zip_path: str, table_name: str):
 # Upload API: accepts multipart/form-data with fields: name (optional), file (required .zip)
 @app.route('/api/upload', methods=['POST'])
 def api_upload():
+    if OFFLINE_MODE:
+        return jsonify({'error': 'OFFLINE_MODE: upload/ingest disabled'}), 503
     try:
         if 'file' not in request.files:
             return jsonify({'error': 'No file part in the request'}), 400
@@ -200,7 +207,8 @@ def handle_internal_error(e):
     return render_template('error.html', message=str(e)), 500
 
 # Create the main database engine (defined once; function with isolation_level parameter is at top)
-engine = make_db_engine()
+if engine is None and not OFFLINE_MODE:
+    engine = make_db_engine()
 
 @app.route('/')
 def index():
@@ -268,6 +276,9 @@ def view_table(table_name):
 @app.route('/api/table/<table_name>')
 def api_table_data(table_name):
     """API endpoint to get table data as JSON"""
+    # Short-circuit in OFFLINE mode
+    if OFFLINE_MODE:
+        return jsonify({'table': table_name, 'columns': [], 'data': [], 'count': 0})
     try:
         with engine.connect() as conn:
             # Get table structure
@@ -319,6 +330,14 @@ def api_status():
     print(f"Time: {datetime.datetime.now()}")
     print(f"Database URL: {os.environ.get('DATABASE_URL', 'Not set')[:20]}...")
     
+    # Short-circuit in OFFLINE mode
+    if OFFLINE_MODE:
+        return jsonify({
+            'status': 'offline',
+            'message': 'OFFLINE_MODE is enabled. Running without a database.',
+            'timestamp': datetime.datetime.now().isoformat()
+        }), 200
+
     temp_engine = None
     try:
         # Create a fresh engine for this check
@@ -369,6 +388,13 @@ def api_stats():
     Uses PostGIS functions and aggregates over all public tables having a geometry column.
     Distances/areas are in meters via geography casts.
     """
+    # Short-circuit in OFFLINE mode
+    if OFFLINE_MODE:
+        return jsonify({
+            'polygons': {'total_area_m2': 0.0, 'count': 0, 'tables': []},
+            'lines': {'total_length_m': 0.0, 'count': 0, 'tables': []},
+            'points': {'count': 0, 'tables': []}
+        })
     try:
         with engine.connect() as conn:
             # Ensure PostGIS exists quickly; if missing, return zeros with hint
@@ -455,6 +481,9 @@ def api_stats():
 @app.route('/api/tables')
 def api_tables():
     """List tables with basic metadata used by the Glass UI."""
+    # Short-circuit in OFFLINE mode
+    if OFFLINE_MODE:
+        return jsonify({'tables': []})
     try:
         with engine.connect() as conn:
             inspector = inspect(engine)
@@ -514,6 +543,9 @@ def api_routes():
 @app.route('/api/geojson/<table_name>')
 def api_geojson(table_name):
     """API endpoint to get spatial data as GeoJSON FeatureCollection"""
+    # Short-circuit in OFFLINE mode
+    if OFFLINE_MODE:
+        return jsonify({'type': 'FeatureCollection', 'features': []})
     try:
         with engine.connect() as conn:
             # Get table structure using PostGIS metadata
@@ -588,6 +620,8 @@ def api_geojson(table_name):
 def api_geojson_filtered(table_name):
     """API endpoint to get filtered spatial data as GeoJSON FeatureCollection"""
     filter_query = request.args.get('q', '').strip()
+    if OFFLINE_MODE:
+        return jsonify({'type': 'FeatureCollection', 'features': [], 'filter_applied': True, 'filter_query': filter_query, 'total_features': 0})
     
     if not filter_query:
         # If no filter, redirect to regular geojson endpoint
@@ -754,6 +788,8 @@ def upload_shapefile():
         return redirect(url_for('glass_ui'))
     
     # Handle POST request (file upload)
+    if OFFLINE_MODE:
+        return jsonify({'error': 'Uploads are disabled in OFFLINE_MODE.'}), 503
     if 'file' not in request.files:
         return jsonify({'error': 'No file selected'}), 400
     
@@ -941,56 +977,75 @@ def process_shapefile_upload(zip_filepath, upload_id, desired_name=None):
 
 @app.route('/download/shapefile/<table_name>')
 def download_shapefile(table_name):
-    """Download spatial table as shapefile ZIP"""
+    """Download spatial table as shapefile ZIP.
+    Detects the geometry column name dynamically and exports to a ZIP in-memory.
+    """
     try:
         with engine.connect() as conn:
-            # Check if table has spatial data
-            col_result = conn.execute(text(f"""
+            # Check if table exists and inspect columns
+            col_result = conn.execute(text(
+                """
                 SELECT column_name, data_type, udt_name 
                 FROM information_schema.columns 
-                WHERE table_name = '{table_name}'
-            """))
+                WHERE table_schema = 'public' AND table_name = :t
+                ORDER BY ordinal_position
+                """
+            ), {"t": table_name})
             col_info = col_result.fetchall()
-            
-            # Check for spatial columns
-            has_geometry = any(
-                row[2] == 'geometry' or row[2] == 'geography' or 
-                row[0].lower() in ['geometry', 'geom', 'the_geom', 'wkb_geometry']
-                for row in col_info
-            )
-            
-            if not has_geometry:
+
+            if not col_info:
+                return jsonify({'error': f"Table '{table_name}' not found"}), 404
+
+            # Determine geometry column name
+            candidates = ['geometry', 'geom', 'the_geom', 'wkb_geometry']
+            geom_col = None
+            # Prefer explicit geometry/geography udt_name
+            for c_name, _data_type, udt in col_info:
+                if (udt and udt.lower() in ('geometry', 'geography')) or (c_name.lower() in candidates):
+                    geom_col = c_name
+                    break
+
+            if not geom_col:
                 return jsonify({'error': 'Table does not contain spatial data'}), 400
-            
+
             # Read spatial data using GeoPandas
-            query = f"SELECT * FROM {table_name}"
-            gdf = gpd.read_postgis(query, conn, geom_col='geometry')
-            
+            quoted = '"' + table_name.replace('"', '""') + '"'
+            query = f"SELECT * FROM {quoted}"
+            gdf = gpd.read_postgis(query, conn, geom_col=geom_col)
+
             if len(gdf) == 0:
                 return jsonify({'error': 'No data found in table'}), 404
-            
+
+            # Ensure CRS for output (optional, Shapefile supports a .prj file)
+            try:
+                if gdf.crs is None:
+                    pass  # leave as-is; GeoPandas may still write without .prj
+                else:
+                    # Write as-is; do not force reproject to avoid attribute changes
+                    pass
+            except Exception:
+                pass
+
             # Create temporary directory for shapefile components
             with tempfile.TemporaryDirectory() as temp_dir:
-                shapefile_path = os.path.join(temp_dir, f"{table_name}.shp")
-                
+                shp_base = os.path.join(temp_dir, table_name)
+                shp_path = shp_base + '.shp'
+
                 # Write shapefile
-                gdf.to_file(shapefile_path, driver='ESRI Shapefile')
-                
+                gdf.to_file(shp_path, driver='ESRI Shapefile')
+
                 # Create ZIP file in memory
                 zip_buffer = io.BytesIO()
-                
+
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     # Add all shapefile components to ZIP
-                    shapefile_extensions = ['.shp', '.shx', '.dbf', '.prj', '.cpg']
-                    base_name = os.path.join(temp_dir, table_name)
-                    
-                    for ext in shapefile_extensions:
-                        file_path = base_name + ext
+                    for ext in ('.shp', '.shx', '.dbf', '.prj', '.cpg'):
+                        file_path = shp_base + ext
                         if os.path.exists(file_path):
                             zip_file.write(file_path, f"{table_name}{ext}")
-                
+
                 zip_buffer.seek(0)
-                
+
                 # Return ZIP file as download
                 return Response(
                     zip_buffer.getvalue(),
@@ -1000,9 +1055,17 @@ def download_shapefile(table_name):
                         'Content-Type': 'application/zip'
                     }
                 )
-                
     except Exception as e:
         return jsonify({'error': f'Failed to create shapefile: {str(e)}'}), 500
+
+@app.route('/api/download-shapefile')
+def api_download_shapefile():
+    """Alias API endpoint that accepts ?table=<name> and delegates to download_shapefile."""
+    table = request.args.get('table', '').strip()
+    if not table:
+        return jsonify({'error': 'Missing required query parameter: table'}), 400
+    # Reuse the core implementation by calling the function directly
+    return download_shapefile(table)
 
 @app.route('/api/search')
 def search_database():
