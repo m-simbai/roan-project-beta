@@ -783,6 +783,16 @@
             margin-bottom: 12px;
         }
 
+        /* Export menu (light theme adjustments) */
+        [data-theme="light"] .export-menu {
+            background: rgba(0,0,0,0.08) !important;
+            border: 1px solid rgba(0,0,0,0.18) !important;
+        }
+
+        /* Hide plugin/screenshoter default button and any north-arrow control in working UI */
+        .leaflet-control-simpleMapScreenshoter-btn,
+        .north-arrow { display: none !important; }
+
         /* Layers header actions row */
         .layers-header {
             display: flex;
@@ -1381,6 +1391,17 @@
         <button class="basemap-btn glass-button" id="basemapBtn" title="Basemap">
             <i class="fas fa-map"></i>
         </button>
+        <div style="position: relative;">
+            <button class="glass-button" id="exportBtn" title="Export Layout">
+                <i class="fas fa-file-export"></i>
+            </button>
+            <div id="exportMenu" class="glass export-menu" style="position:absolute; right:0; top:56px; display:none; padding:10px; border-radius:12px;">
+                <div style="display:flex; flex-direction:column; gap:8px; min-width:160px;">
+                    <button class="action-button" id="exportPng"><i class="fas fa-image"></i> Export PNG</button>
+                    <button class="action-button" id="exportPdf"><i class="fas fa-file-pdf"></i> Export PDF</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Layers Panel -->
@@ -1504,30 +1525,346 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet simple map screenshoter (export to image) -->
+    <script src="https://unpkg.com/leaflet-simple-map-screenshoter"></script>
+    <!-- jsPDF for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script>
-        // Initialize map with proper coordinates for demonstration (Harare CBD)
-        const map = L.map(`map`, { zoomControl: false }).setView([-17.8290, 31.0530], 14);
+        // Initialize map
+        const map = L.map('map', {
+            zoomControl: false,
+            worldCopyJump: true
+        });
+
+        // Constrain the map to world bounds and compute min zoom so full zoom-out
+        // fills the viewport without vertical gaps above/below the map tiles.
+        const worldBounds = L.latLngBounds([[-85, -180], [85, 180]]);
+        // Compute the minimum zoom that fits the world bounds entirely inside the viewport
+        const computedMinZoom = map.getBoundsZoom(worldBounds, true);
+        map.setMinZoom(computedMinZoom);
+        map.setMaxBounds(worldBounds);
+        // Add slight viscosity to keep the map snugly within bounds when panning/zooming
+        map.options.maxBoundsViscosity = 1.0;
+        // Set default view to specified bounds (SW and NE corners)
+        const defaultBounds = L.latLngBounds([
+            [-16.6717, 28.3090], // South, West
+            [-15.4696, 30.9457]  // North, East
+        ]);
+        map.fitBounds(defaultBounds);
 
         // Base layers
         const osmLayer = L.tileLayer(`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`, {
-            attribution: `© OpenStreetMap contributors`
+            attribution: `© OpenStreetMap contributors`,
+            noWrap: true,
+            crossOrigin: true
         });
         // Dark basemap (CartoDB Dark Matter)
         const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            noWrap: true,
+            crossOrigin: true
         });
 
 
         const satelliteLayer = L.tileLayer(`https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}`, {
-            attribution: `© Google`
+            attribution: `© Google`,
+            noWrap: true
         });
 
         const roadmapLayer = L.tileLayer(`https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}`, {
-            attribution: `© Google`
+            attribution: `© Google`,
+            noWrap: true
         });
 
         // Add default layer (OSM light theme)
         osmLayer.addTo(map);
+        // Add a scale bar (metric)
+        L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(map);
+
+        // North arrow control
+        const NorthControl = L.Control.extend({
+            options: { position: 'topright' },
+            onAdd: function() {
+                const div = L.DomUtil.create('div', 'glass north-arrow');
+                div.style.padding = '8px';
+                div.style.borderRadius = '8px';
+                div.style.display = 'flex';
+                div.style.alignItems = 'center';
+                div.style.justifyContent = 'center';
+                div.style.width = '40px';
+                div.style.height = '40px';
+                div.style.backdropFilter = 'blur(10px)';
+                div.style.border = '1px solid var(--glass-border)';
+                div.title = 'North';
+                div.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3l4 8h-8l4-8z" fill="currentColor"/><rect x="11" y="11" width="2" height="10" fill="currentColor"/></svg>';
+                return div;
+            }
+        });
+        map.addControl(new NorthControl());
+
+        // Bounding coordinates control (updates on moveend)
+        const BoundsControl = L.Control.extend({
+            options: { position: 'bottomright' },
+            onAdd: function() {
+                this._div = L.DomUtil.create('div', 'glass bounds-box');
+                this._div.style.padding = '8px 10px';
+                this._div.style.borderRadius = '8px';
+                this._div.style.fontSize = '11px';
+                this._div.style.lineHeight = '1.2';
+                this._div.style.border = '1px solid var(--glass-border)';
+                this.update();
+                return this._div;
+            },
+            update: function() {
+                const b = map.getBounds();
+                const fmt = (x) => x.toFixed(4);
+                const text = `W: ${fmt(b.getWest())}  E: ${fmt(b.getEast())}<br>N: ${fmt(b.getNorth())}  S: ${fmt(b.getSouth())}`;
+                if (this._div) this._div.innerHTML = text;
+            }
+        });
+        const boundsCtl = new BoundsControl();
+        map.addControl(boundsCtl);
+        map.on('moveend', () => boundsCtl.update());
+
+        // Track active layers and their colors for legend and export
+        window.layerRegistry = window.layerRegistry || {};
+
+        // Legend control (uses layerRegistry)
+        const LegendControl = L.Control.extend({
+            options: { position: 'bottomright' },
+            onAdd: function() {
+                this._div = L.DomUtil.create('div', 'glass legend-box');
+                this._div.style.padding = '8px 10px';
+                this._div.style.borderRadius = '8px';
+                this._div.style.fontSize = '12px';
+                this._div.style.border = '1px solid var(--glass-border)';
+                this.update();
+                return this._div;
+            },
+            update: function() {
+                const entries = Object.values(window.layerRegistry);
+                if (!entries.length) {
+                    this._div.innerHTML = '<div style="opacity:0.7">No layers</div>';
+                    return;
+                }
+                const html = entries.map(e => `
+                    <div style="display:flex;align-items:center;gap:8px;margin:2px 0;">
+                        <span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${e.color};border:1px solid rgba(0,0,0,0.2)"></span>
+                        <span>${e.name}</span>
+                    </div>`).join('');
+                this._div.innerHTML = `<div style="font-weight:600;margin-bottom:4px;">Legend</div>${html}`;
+            }
+        });
+        // Prepare legend control, but do not add to map UI; we'll draw legend on export only
+        const legendCtl = new LegendControl();
+
+        // Initialize map screenshoter for exporting current view
+        const screenshoter = L.simpleMapScreenshoter({
+            hideElementsWithSelectors: [
+                // nothing to hide; include controls in export
+            ],
+            domtoimageOptions: {
+                // improve text rendering
+                style: {
+                    'font-family': `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+                }
+            },
+            // Fallback name if plugin button is ever used (we also remove it below)
+            screenName: () => {
+                const dt = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                return `map_export_${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}_${pad(dt.getHours())}-${pad(dt.getMinutes())}-${pad(dt.getSeconds())}`;
+            }
+        }).addTo(map);
+
+        // Remove plugin control button entirely to prevent accidental GUID-named downloads
+        (function removePluginButton() {
+            const btns = document.querySelectorAll('.leaflet-control-simpleMapScreenshoter-btn');
+            btns.forEach(b => b.remove());
+        })();
+
+        // Helper: determine current base layer and if it's CORS-safe
+        function getCurrentBase() {
+            const bases = [osmLayer, darkLayer, satelliteLayer, roadmapLayer];
+            return bases.find(b => map.hasLayer(b)) || osmLayer;
+        }
+        function isCorsSafeBase(base) {
+            // OSM and Carto are typically CORS-enabled via unpkg/CDN; Google is not
+            return base === osmLayer || base === darkLayer;
+        }
+        // Helper: wait for tiles to load after switching basemap
+        function waitTilesOnce(layer, timeoutMs = 1500) {
+            return new Promise(resolve => {
+                let done = false;
+                const finish = () => { if (!done) { done = true; resolve(); } };
+                const t = setTimeout(finish, timeoutMs);
+                layer.once('load', () => { clearTimeout(t); finish(); });
+            });
+        }
+        // Capture canvas for current view, ensuring CORS-safe tiles
+        async function captureCurrentViewCanvas() {
+            const currentBase = getCurrentBase();
+            let restored = false;
+            let toRestore = null;
+            if (!isCorsSafeBase(currentBase)) {
+                // Temporarily switch to OSM for capture
+                toRestore = currentBase;
+                if (map.hasLayer(toRestore)) map.removeLayer(toRestore);
+                if (!map.hasLayer(osmLayer)) osmLayer.addTo(map);
+                await waitTilesOnce(osmLayer, 1200);
+                restored = true;
+            }
+            try {
+                const blob = await screenshoter.takeScreen('blob');
+                // Convert blob to canvas for PDF placement flexibility
+                const img = await new Promise((res) => {
+                    const url = URL.createObjectURL(blob);
+                    const image = new Image();
+                    image.onload = () => { res({ image, url }); };
+                    image.src = url;
+                });
+                // Draw to canvas to get PNG dataURL and dimensions
+                const canvas = document.createElement('canvas');
+                canvas.width = img.image.naturalWidth || img.image.width;
+                canvas.height = img.image.naturalHeight || img.image.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img.image, 0, 0);
+                URL.revokeObjectURL(img.url);
+                return canvas;
+            } finally {
+                if (restored && toRestore) {
+                    // Restore original base
+                    if (map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
+                    toRestore.addTo(map);
+                    await waitTilesOnce(toRestore, 0);
+                }
+            }
+        }
+        // End captureCurrentViewCanvas
+        
+        // Draw export-only overlays (north arrow + legend) on the given canvas
+        function drawExportOverlays(canvas) {
+            const ctx = canvas.getContext('2d');
+            const scale = Math.max(1, Math.min(canvas.width, canvas.height) / 1000);
+
+            // Choose arrow color based on current UI text color
+            let useWhiteArrow = false;
+            try {
+                const color = getComputedStyle(document.body).color || '#ffffff';
+                const m = color.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+                if (m) {
+                    const r = parseInt(m[1], 10), g = parseInt(m[2], 10), b = parseInt(m[3], 10);
+                    const luminance = 0.2126*r + 0.7152*g + 0.0722*b; // 0..255
+                    useWhiteArrow = luminance > 160;
+                }
+            } catch {}
+
+            // North Arrow (top-right, larger, nudged right)
+            (function drawNorthArrow() {
+                const pad = 14 * scale;
+                const rightNudge = 6 * scale;
+                const size = 54 * scale; // bigger arrow
+                const cx = canvas.width - pad - rightNudge - size/2;
+                const cy = pad + size/2;
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.shadowColor = 'rgba(0,0,0,0.28)';
+                ctx.shadowBlur = 8 * scale;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+                const arrowColor = useWhiteArrow ? '#ffffff' : '#111111';
+                ctx.fillStyle = arrowColor;
+
+                // Shaft (rounded rectangle)
+                const shaftW = 4 * scale;
+                const shaftH = size * 0.68;
+                const shaftY = -shaftH * 0.15;
+                const radius = 2 * scale;
+                ctx.beginPath();
+                ctx.moveTo(-shaftW/2, shaftY);
+                ctx.lineTo(-shaftW/2, shaftY + shaftH - radius);
+                ctx.quadraticCurveTo(-shaftW/2, shaftY + shaftH, -shaftW/2 + radius, shaftY + shaftH);
+                ctx.lineTo(shaftW/2 - radius, shaftY + shaftH);
+                ctx.quadraticCurveTo(shaftW/2, shaftY + shaftH, shaftW/2, shaftY + shaftH - radius);
+                ctx.lineTo(shaftW/2, shaftY);
+                ctx.closePath();
+                ctx.fill();
+
+                // Triangle head
+                ctx.beginPath();
+                ctx.moveTo(0, -size*0.60);
+                ctx.lineTo(size*0.30, -size*0.05);
+                ctx.lineTo(-size*0.30, -size*0.05);
+                ctx.closePath();
+                ctx.fill();
+
+                // Letter N
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = useWhiteArrow ? 'rgba(255,255,255,0.95)' : 'rgba(0,0,0,0.85)';
+                ctx.font = `${13*scale}px Segoe UI, Roboto, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillText('N', 0, size*0.12);
+                ctx.restore();
+            })();
+
+            // Legend (bottom-right) from window.layerRegistry
+            (function drawLegendBox() {
+                const entries = Object.values(window.layerRegistry || {});
+                if (!entries.length) return;
+                const pad = 14 * scale;
+                const gap = 8 * scale;
+                const sw = 14 * scale; // swatch size
+                const lineH = 18 * scale;
+                const title = 'Legend';
+                ctx.save();
+                ctx.font = `${12*scale}px Segoe UI, Roboto, sans-serif`;
+                const titleW = ctx.measureText(title).width;
+                let maxTextW = titleW;
+                entries.forEach(e => { maxTextW = Math.max(maxTextW, ctx.measureText(e.name || '').width); });
+                const boxW = pad*2 + sw + 8*scale + maxTextW;
+                const boxH = pad*2 + (entries.length * lineH) + (title ? (lineH) : 0);
+                const x = canvas.width - boxW - 16*scale;
+                const y = canvas.height - boxH - 16*scale;
+                // Background with rounded corners
+                const r = 10 * scale;
+                ctx.beginPath();
+                ctx.moveTo(x+r, y);
+                ctx.lineTo(x+boxW-r, y);
+                ctx.quadraticCurveTo(x+boxW, y, x+boxW, y+r);
+                ctx.lineTo(x+boxW, y+boxH-r);
+                ctx.quadraticCurveTo(x+boxW, y+boxH, x+boxW-r, y+boxH);
+                ctx.lineTo(x+r, y+boxH);
+                ctx.quadraticCurveTo(x, y+boxH, x, y+boxH-r);
+                ctx.lineTo(x, y+r);
+                ctx.quadraticCurveTo(x, y, x+r, y);
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                ctx.fill();
+                ctx.lineWidth = 1 * scale;
+                ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                ctx.stroke();
+                // Title
+                ctx.fillStyle = '#111';
+                ctx.font = `${12*scale}px Segoe UI, Roboto, sans-serif`;
+                ctx.fillText(title, x + pad, y + pad + 10*scale);
+                // Entries
+                ctx.font = `${12*scale}px Segoe UI, Roboto, sans-serif`;
+                let cy = y + pad + (title ? (lineH) : 0);
+                entries.forEach(e => {
+                    // swatch
+                    ctx.fillStyle = e.color || '#888';
+                    ctx.fillRect(x + pad, cy - sw + 2*scale, sw, sw);
+                    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+                    ctx.strokeRect(x + pad, cy - sw + 2*scale, sw, sw);
+                    // label
+                    ctx.fillStyle = '#111';
+                    ctx.fillText(e.name || 'Layer', x + pad + sw + 8*scale, cy + 2*scale);
+                    cy += lineH;
+                });
+                ctx.restore();
+            })();
+        }
 
         // DOM elements
         const sidebar = document.getElementById(`sidebar`);
@@ -1538,6 +1875,10 @@
         const layersPanel = document.getElementById(`layersPanel`);
         const basemapPanel = document.getElementById(`basemapPanel`);
         const attributeTable = document.getElementById(`attributeTable`);
+        const exportBtn = document.getElementById('exportBtn');
+        const exportMenu = document.getElementById('exportMenu');
+        const exportPngBtn = document.getElementById('exportPng');
+        const exportPdfBtn = document.getElementById('exportPdf');
         const attributeTableBtn = document.getElementById(`attributeTableBtn`);
         const closeAttributeTable = document.getElementById(`closeAttributeTable`);
         const uploadPanel = document.getElementById(`uploadPanel`);
@@ -3051,6 +3392,9 @@ window.addEventListener('resize', () => positionAttributeTable(lastAnchorEl));
             if (!uploadBtn.contains(e.target) && !uploadPanel.contains(e.target)) {
                 uploadPanel.classList.remove('open');
             }
+            if (!exportBtn.contains(e.target) && !exportMenu.contains(e.target)) {
+                exportMenu.style.display = 'none';
+            }
         });
 
         // Close upload panel on Escape
@@ -3062,6 +3406,87 @@ window.addEventListener('resize', () => positionAttributeTable(lastAnchorEl));
 
         // Reposition on resize to stay anchored above button
         window.addEventListener('resize', positionUploadPanel);
+
+        // Export button/menu handlers
+        exportBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const visible = exportMenu.style.display === 'block';
+            exportMenu.style.display = visible ? 'none' : 'block';
+        });
+
+        function filenameBase() {
+            const dt = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            return `map_export_${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}_${pad(dt.getHours())}-${pad(dt.getMinutes())}-${pad(dt.getSeconds())}`;
+        }
+
+        exportPngBtn.addEventListener('click', async () => {
+            exportMenu.style.display = 'none';
+            try {
+                const canvas = await captureCurrentViewCanvas();
+                drawExportOverlays(canvas);
+                const name = `${filenameBase()}.png`;
+                // Use Blob + ObjectURL to enforce filename on all browsers
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        // Fallback to dataURL if toBlob is unavailable
+                        const link = document.createElement('a');
+                        link.href = canvas.toDataURL('image/png');
+                        link.download = name;
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        return;
+                    }
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = name;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1500);
+                }, 'image/png', 1.0);
+            } catch (err) {
+                console.error('PNG export failed:', err);
+                alert('PNG export failed. Try switching to OSM basemap and retry.');
+            }
+        });
+
+        exportPdfBtn.addEventListener('click', async () => {
+            exportMenu.style.display = 'none';
+            try {
+                const canvas = await captureCurrentViewCanvas();
+                drawExportOverlays(canvas);
+                const { jsPDF } = window.jspdf;
+                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                // Create PDF matching map aspect ratio on A4 (landscape/portrait auto)
+                const pw = 297; // A4 landscape width in mm
+                const ph = 210; // A4 landscape height in mm
+                const aspect = canvas.width / canvas.height;
+                let pdfOrient = aspect >= (pw/ph) ? 'l' : 'p';
+                const doc = new jsPDF({ orientation: pdfOrient, unit: 'mm', format: 'a4' });
+                const pageW = doc.internal.pageSize.getWidth();
+                const pageH = doc.internal.pageSize.getHeight();
+                let w = pageW - 20; // 10mm margins
+                let h = w / aspect;
+                if (h > pageH - 20) { h = pageH - 20; w = h * aspect; }
+                const x = (pageW - w) / 2;
+                const y = (pageH - h) / 2;
+                // Title and metadata
+                doc.setFontSize(12);
+                doc.text('Map Export', 10, 10);
+                const b = map.getBounds();
+                const fmt = (x) => x.toFixed(4);
+                doc.setFontSize(9);
+                doc.text(`Bounds: W ${fmt(b.getWest())}  E ${fmt(b.getEast())}  N ${fmt(b.getNorth())}  S ${fmt(b.getSouth())}`, 10, 16);
+                doc.addImage(imgData, 'JPEG', x, y, w, h);
+                doc.save(`${filenameBase()}.pdf`);
+            } catch (err) {
+                console.error('PDF export failed:', err);
+                alert('PDF export failed. Try switching to OSM basemap and retry.');
+            }
+        });
 
         // Add some demo markers to show spatial data
         const demoMarkers = [
